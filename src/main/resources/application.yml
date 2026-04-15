@@ -1,0 +1,22 @@
+server:
+  port: 8080
+
+servicenow:
+  instance:
+    url: https://everisspainsludemo3.service-now.com
+  base-url: https://everisspainsludemo3.service-now.com
+  oauth:
+    client-id: 7d069f603a114972b00d6b7d89d66de6
+    client-secret: 8350686f1b0305103ca30d8cdc4bcbbe
+    authorization-url: https://everisspainsludemo3.service-now.com/oauth_auth.do
+    token-url: https://everisspainsludemo3.service-now.com/oauth_token.do
+    redirect-uri: http://localhost:8080/oauth/callback
+
+ollama:
+  model: phi3-manual:latest
+
+logging:
+  level:
+    com.enterprise.agent: DEBUG
+    org.springframework.web.reactive.function.client: DEBUG
+    reactor.netty.http.client: DEBUG
