@@ -1,35 +1,66 @@
 package com.enterprise.agent.agent;
 
 import com.enterprise.agent.client.ServiceNowClient;
+import com.enterprise.agent.context.UserContext;
 import com.enterprise.agent.service.LLMService;
 import com.enterprise.agent.service.ServiceNowOAuthTokenProvider;
 import com.fasterxml.jackson.databind.JsonNode;
+import lombok.Data;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 import com.enterprise.agent.memory.ConversationMemory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * ActionRouter: Ejecutor de acciones del sistema agéntico
+ * 
+ * RESPONSABILIDAD:
+ * - Recibe una IntentResult del IntentClassifier
+ * - Ejecuta la acción apropiada (GET_INCIDENT, CREATE_INCIDENT, etc)
+ * - Interactúa con ServiceNowClient para operaciones ITSM
+ * - Devuelve ActionResult con el resultado de la operación
+ * 
+ * FASE 1 (MVP): Acciones síncronas simples
+ * - GET_INCIDENT: obtener ticket por número
+ * - SEARCH_INCIDENTS: buscar tickets del usuario
+ * - CREATE_INCIDENT: crear nuevo ticket
+ * - ANALYZE_INCIDENT: análisis básico con LLM
+ * - CHAT: respuesta conversacional
+ * 
+ * FASE 2 (Agentes autónomos):
+ * - Acciones asíncronas con callbacks
+ * - Workflows multi-step con planificación
+ * - Tool calling para integraciones externas
+ * - Human-in-the-loop para aprobaciones
+ */
 @Component
+@Log4j2
 public class ActionRouter {
-
-    private static final Logger logger = LoggerFactory.getLogger(ActionRouter.class);
 
     private final ServiceNowClient serviceNowClient;
     private final ServiceNowOAuthTokenProvider tokenProvider;
     private final LLMService llmService;
     private final ConversationMemory memory;
 
-    private static final String YELLOW = "\u001B[33m";
-    private static final String RESET = "\u001B[0m";
-
-    private static final Pattern INCIDENT_PATTERN = Pattern.compile("INC\\d+");
-
-    // Cache for authenticated user info
-    private String authenticatedUserSysId;
-    private String authenticatedUsername;
+    /**
+     * Resultado de una acción ejecutada
+     */
+    @Data
+    public static class ActionResult {
+        private final boolean success;
+        private final String message;
+        private final Map<String, Object> data;
+        
+        public static ActionResult success(String message, Map<String, Object> data) {
+            return new ActionResult(true, message, data != null ? data : new HashMap<>());
+        }
+        
+        public static ActionResult failure(String message) {
+            return new ActionResult(false, message, new HashMap<>());
+        }
+    }
 
     public ActionRouter(ServiceNowClient serviceNowClient,
                         ServiceNowOAuthTokenProvider tokenProvider,
@@ -42,193 +73,233 @@ public class ActionRouter {
     }
 
     /**
-     * Execute agent decisions with OAuth authentication.
-     * No longer requires user credentials as parameters.
+     * Ejecutar acción basada en la intención clasificada
+     * 
+     * @param intentResult resultado del clasificador de intención
+     * @param userContext contexto del usuario autenticado
+     * @param sessionId ID de sesión para contexto conversacional
+     * @return resultado de la acción
      */
-    public void execute(AgentDecision decision) {
+    public ActionResult execute(
+            IntentClassifier.IntentResult intentResult, 
+            UserContext userContext,
+            String sessionId) {
         
-        // Ensure we have authenticated user info
-        ensureUserAuthentication();
-
-        String input = decision.getOriginalInput() != null
-                ? decision.getOriginalInput().toLowerCase()
-                : "";
-
-        // Detect explicit incident number
-        Matcher matcher = INCIDENT_PATTERN.matcher(input.toUpperCase());
-        if (matcher.find()) {
-            decision.setAction("GET_INCIDENT");
-            decision.setNumber(matcher.group());
-        }
-
-        // Detect request for last incident (not from memory)
-        if ((input.contains("mi última")
-                || input.contains("mi ultimo")
-                || input.contains("más reciente")
-                || input.contains("ultima incidencia")
-                || input.contains("última incidencia"))
-                && !input.contains("recuerdas")) {
-
-            decision.setAction("GET_LAST_INCIDENT");
-        }
-
-        // Memory questions
-        if (input.contains("recuerdas")) {
-            if (memory.getSuccessfulIncidents().isEmpty()) {
-                System.out.println(YELLOW +
-                        "\nNo hemos consultado incidentes exitosamente todavía.\n" + RESET);
-            } else {
-                System.out.println(YELLOW +
-                        "\nHas consultado exitosamente: "
-                        + memory.getSuccessfulIncidents() + "\n" + RESET);
-            }
-            return;
-        }
-
-        if (decision.getAction() == null || decision.getAction().isBlank()) {
-            decision.setAction("CHAT");
-        }
-
-        switch (decision.getAction()) {
-            case "GET_INCIDENT" -> handleGetIncident(decision);
-            case "GET_LAST_INCIDENT" -> handleGetLastIncident();
-            case "CREATE_INCIDENT" -> handleCreateIncident(decision);
-            case "CHAT" -> handleChat(decision);
-            default -> System.out.println("Actualmente no puedo ejecutar esa acción.");
+        log.info("Executing action: intent={}, user={}, session={}", 
+            intentResult.intent(), 
+            userContext.getUserId(), 
+            sessionId);
+        
+        try {
+            return switch (intentResult.intent()) {
+                case GET_INCIDENT -> handleGetIncident(intentResult, userContext);
+                case SEARCH_INCIDENTS -> handleSearchIncidents(userContext);
+                case CREATE_INCIDENT -> handleCreateIncident(intentResult, userContext);
+                case ANALYZE_INCIDENT -> handleAnalyzeIncident(intentResult, userContext);
+                case CHAT -> handleChat(intentResult);
+            };
+            
+        } catch (SecurityException e) {
+            log.warn("Security exception during action execution: {}", e.getMessage());
+            throw e; // Propagate to AgentOrchestrator
+            
+        } catch (Exception e) {
+            log.error("Error executing action: intent={}, error={}", 
+                intentResult.intent(), e.getMessage(), e);
+            return ActionResult.failure("Error al ejecutar la acción: " + e.getMessage());
         }
     }
 
-    private void handleChat(AgentDecision decision) {
-        String response = llmService.generateChatResponse(decision.getOriginalInput());
-        System.out.println(YELLOW + "\n" + response + "\n" + RESET);
-    }
-
-    private void handleGetIncident(AgentDecision decision) {
-        String number = decision.getNumber();
-
-        if (number == null || number.isBlank()) {
-            System.out.println("No pude identificar un número de incidente válido.");
-            return;
+    /**
+     * GET_INCIDENT: Obtener detalles de un ticket específico
+     */
+    private ActionResult handleGetIncident(
+            IntentClassifier.IntentResult intentResult, 
+            UserContext userContext) {
+        
+        String incidentNumber = (String) intentResult.parameters().get("number");
+        
+        // Si no hay número, intentar obtener el último del contexto
+        if (incidentNumber == null || incidentNumber.isBlank()) {
+            log.info("No incident number provided, searching for last incident");
+            return handleSearchIncidents(userContext);
         }
-
-        System.out.println("Consultando incidente " + number + "...");
-
+        
+        log.info("Getting incident: number={}, user={}", incidentNumber, userContext.getUserId());
+        
         try {
             JsonNode response = serviceNowClient.getIncidentSecureByNumberAndCaller(
-                    number, authenticatedUserSysId);
-
-            if (response != null
-                    && response.has("result")
-                    && response.get("result").isArray()
-                    && response.get("result").size() > 0) {
-
-                memory.addSuccessful(number);
-
+                incidentNumber, 
+                userContext.getUserId()
+            );
+            
+            if (response != null 
+                && response.has("result") 
+                && response.get("result").isArray()
+                && response.get("result").size() > 0) {
+                
                 JsonNode incident = response.get("result").get(0);
-
+                
                 String shortDesc = incident.path("short_description").asText("Sin descripción");
                 String state = translateState(incident.path("state").asText());
                 String priority = incident.path("priority").asText("No definida");
-
-                String contextData = """
-                        Número: %s
-                        Descripción: %s
-                        Estado: %s
-                        Prioridad: %s
-                        """.formatted(number, shortDesc, state, priority);
-
+                
+                // Generar resumen con LLM
+                String contextData = String.format(
+                    "Número: %s\nDescripción: %s\nEstado: %s\nPrioridad: %s",
+                    incidentNumber, shortDesc, state, priority
+                );
+                
                 String summary = llmService.generateIncidentSummary(contextData);
-                System.out.println(YELLOW + "\n" + summary + "\n" + RESET);
-
+                
+                Map<String, Object> data = new HashMap<>();
+                data.put("incident_number", incidentNumber);
+                data.put("short_description", shortDesc);
+                data.put("state", state);
+                data.put("priority", priority);
+                
+                return ActionResult.success(summary, data);
+                
             } else {
-                memory.addFailed(number);
-                System.out.println(YELLOW +
-                        "\nNo se encontró el incidente o no tienes permisos para verlo.\n"
-                        + RESET);
+                log.warn("Incident not found or no access: {}", incidentNumber);
+                return ActionResult.failure(
+                    "No encontré el ticket " + incidentNumber + " o no tienes permisos para verlo."
+                );
             }
-
+            
         } catch (Exception e) {
-            logger.error("Error retrieving incident {}", number, e);
-            memory.addFailed(number);
-            System.out.println(YELLOW +
-                    "\nError al consultar el incidente: " + e.getMessage() + "\n"
-                    + RESET);
+            log.error("Error getting incident: {}", incidentNumber, e);
+            return ActionResult.failure("Error al consultar el ticket: " + e.getMessage());
         }
     }
 
-    private void handleGetLastIncident() {
-        System.out.println("Consultando tu última incidencia registrada...");
-
+    /**
+     * SEARCH_INCIDENTS: Buscar tickets del usuario
+     */
+    private ActionResult handleSearchIncidents(UserContext userContext) {
+        
+        log.info("Searching incidents for user: {}", userContext.getUserId());
+        
         try {
-            JsonNode response = serviceNowClient.getIncidentsByCallerId(authenticatedUserSysId);
-
-            if (response != null
-                    && response.has("result")
-                    && response.get("result").isArray()
-                    && response.get("result").size() > 0) {
-
+            JsonNode response = serviceNowClient.getIncidentsByCallerId(
+                userContext.getUserId()
+            );
+            
+            if (response != null 
+                && response.has("result") 
+                && response.get("result").isArray()
+                && response.get("result").size() > 0) {
+                
                 JsonNode incident = response.get("result").get(0);
-
+                
                 String number = incident.path("number").asText();
                 String shortDesc = incident.path("short_description").asText("Sin descripción");
                 String state = translateState(incident.path("state").asText());
                 String priority = incident.path("priority").asText("No definida");
-
-                memory.addSuccessful(number);
-
-                String contextData = """
-                        Número: %s
-                        Descripción: %s
-                        Estado: %s
-                        Prioridad: %s
-                        """.formatted(number, shortDesc, state, priority);
-
+                
+                // Generar resumen con LLM
+                String contextData = String.format(
+                    "Número: %s\nDescripción: %s\nEstado: %s\nPrioridad: %s",
+                    number, shortDesc, state, priority
+                );
+                
                 String summary = llmService.generateIncidentSummary(contextData);
-                System.out.println(YELLOW + "\n" + summary + "\n" + RESET);
-
+                
+                Map<String, Object> data = new HashMap<>();
+                data.put("incident_number", number);
+                data.put("short_description", shortDesc);
+                data.put("state", state);
+                data.put("priority", priority);
+                data.put("total_incidents", response.get("result").size());
+                
+                return ActionResult.success(summary, data);
+                
             } else {
-                System.out.println(YELLOW +
-                        "\nNo tienes incidencias registradas.\n"
-                        + RESET);
+                return ActionResult.failure("No tienes tickets registrados.");
             }
-
+            
         } catch (Exception e) {
-            logger.error("Error retrieving last incident", e);
-            System.out.println(YELLOW +
-                    "\nError al consultar la última incidencia: " + e.getMessage() + "\n"
-                    + RESET);
+            log.error("Error searching incidents", e);
+            return ActionResult.failure("Error al buscar tickets: " + e.getMessage());
         }
     }
 
-    private void handleCreateIncident(AgentDecision decision) {
-        System.out.println("Creando nuevo incidente...");
-
+    /**
+     * CREATE_INCIDENT: Crear nuevo ticket
+     */
+    private ActionResult handleCreateIncident(
+            IntentClassifier.IntentResult intentResult, 
+            UserContext userContext) {
+        
+        String shortDesc = (String) intentResult.parameters().get("short_description");
+        String description = (String) intentResult.parameters().get("description");
+        String priority = (String) intentResult.parameters().getOrDefault("priority", "3");
+        
+        log.info("Creating incident: user={}, short_desc={}", 
+            userContext.getUserId(), shortDesc);
+        
         try {
             JsonNode response = serviceNowClient.createIncident(
-                    decision.getShortDescription(),
-                    decision.getDescription(),
-                    decision.getPriority() != null ? decision.getPriority() : "3",
-                    authenticatedUserSysId
+                shortDesc,
+                description,
+                priority,
+                userContext.getUserId()
             );
-
+            
             if (response != null && response.has("result")) {
                 String number = response.get("result").get("number").asText();
-                memory.addSuccessful(number);
-
-                System.out.println(YELLOW +
-                        "\n✅ Incidente creado correctamente: " + number + "\n" + RESET);
+                
+                Map<String, Object> data = new HashMap<>();
+                data.put("incident_number", number);
+                
+                return ActionResult.success(
+                    "✅ Ticket creado correctamente: " + number,
+                    data
+                );
+                
             } else {
-                System.out.println(YELLOW +
-                        "\n❌ No se pudo crear el incidente.\n" + RESET);
+                return ActionResult.failure("No se pudo crear el ticket.");
             }
-
+            
         } catch (Exception e) {
-            logger.error("Error creating incident", e);
-            System.out.println(YELLOW +
-                    "\n❌ Error al crear el incidente: " + e.getMessage() + "\n" + RESET);
+            log.error("Error creating incident", e);
+            return ActionResult.failure("Error al crear el ticket: " + e.getMessage());
         }
     }
 
+    /**
+     * ANALYZE_INCIDENT: Análisis inteligente de un ticket
+     * TODO: integrar con RAG para recomendaciones basadas en KB
+     */
+    private ActionResult handleAnalyzeIncident(
+            IntentClassifier.IntentResult intentResult, 
+            UserContext userContext) {
+        
+        // Por ahora, reutilizar GET_INCIDENT con análisis mejorado
+        // En fase 2: agregar RAG, detectar patrones, sugerir resoluciones
+        return handleGetIncident(intentResult, userContext);
+    }
+
+    /**
+     * CHAT: Respuesta conversacional general
+     */
+    private ActionResult handleChat(IntentClassifier.IntentResult intentResult) {
+        
+        String userMessage = (String) intentResult.parameters().get("message");
+        
+        try {
+            String response = llmService.generateChatResponse(userMessage);
+            return ActionResult.success(response, new HashMap<>());
+            
+        } catch (Exception e) {
+            log.error("Error generating chat response", e);
+            return ActionResult.failure("Disculpa, tuve un problema generando la respuesta.");
+        }
+    }
+
+    /**
+     * Traducir códigos de estado de ServiceNow a texto legible
+     */
     private String translateState(String state) {
         return switch (state) {
             case "1" -> "Nuevo";
@@ -238,58 +309,5 @@ public class ActionRouter {
             case "7" -> "Cerrado";
             default -> "Desconocido";
         };
-    }
-
-    /**
-     * Gets the authenticated user information using OAuth.
-     * This replaces the old Basic Auth user authentication.
-     */
-    public void ensureUserAuthentication() {
-        if (authenticatedUserSysId == null || authenticatedUsername == null) {
-            try {
-                logger.info("Getting authenticated user information via OAuth");
-                
-                JsonNode userResponse = serviceNowClient.getCurrentUser();
-                
-                if (userResponse != null && userResponse.has("result")) {
-                    JsonNode user = userResponse.get("result");
-                    authenticatedUserSysId = user.path("sys_id").asText();
-                    authenticatedUsername = user.path("user_name").asText();
-                    
-                    logger.info("Authenticated as user: {} (sys_id: {})", 
-                              authenticatedUsername, authenticatedUserSysId);
-                    
-                    // Verify we're authenticated as the expected user
-                    String expectedUsername = tokenProvider.getAuthenticatedUsername();
-                    if (!expectedUsername.equals(authenticatedUsername)) {
-                        logger.warn("Expected user '{}' but authenticated as '{}'", 
-                                  expectedUsername, authenticatedUsername);
-                    }
-                    
-                } else {
-                    throw new RuntimeException("Failed to retrieve current user information");
-                }
-                
-            } catch (Exception e) {
-                logger.error("Failed to get authenticated user information", e);
-                throw new RuntimeException("Authentication failed: " + e.getMessage(), e);
-            }
-        }
-    }
-
-    /**
-     * Returns the authenticated user's sys_id.
-     */
-    public String getAuthenticatedUserSysId() {
-        ensureUserAuthentication();
-        return authenticatedUserSysId;
-    }
-
-    /**
-     * Returns the authenticated username.
-     */
-    public String getAuthenticatedUsername() {
-        ensureUserAuthentication();
-        return authenticatedUsername;
     }
 }

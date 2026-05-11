@@ -13,14 +13,18 @@ import org.springframework.web.reactive.function.client.ExchangeFunction;
 import reactor.core.publisher.Mono;
 
 /**
- * WebClient filter that automatically injects OAuth Bearer tokens
- * and handles authentication failures with automatic token refresh.
+ * WebClient filter that automatically injects authentication headers
+ * Supports both Basic Auth and OAuth strategies based on configuration.
+ * 
+ * Enterprise Pattern: Filter + Strategy
+ * - Transparently handles authentication for all ServiceNow API calls
+ * - Supports multiple auth strategies without changing client code
+ * - Provides centralized error handling and logging
  */
 @Component
 public class ServiceNowWebClientFilter implements ExchangeFilterFunction {
 
     private static final Logger logger = LoggerFactory.getLogger(ServiceNowWebClientFilter.class);
-    private static final String BEARER_PREFIX = "Bearer ";
 
     private final ServiceNowAuthService authService;
 
@@ -30,42 +34,62 @@ public class ServiceNowWebClientFilter implements ExchangeFilterFunction {
 
     @Override
     public Mono<ClientResponse> filter(ClientRequest request, ExchangeFunction next) {
-        // Skip token injection for OAuth token endpoint
+        // Skip auth injection for OAuth token endpoint
         if (isOAuthTokenEndpoint(request)) {
+            logger.debug("Skipping auth injection for OAuth token endpoint");
             return next.exchange(request);
         }
 
-        return addBearerToken(request)
+        return addAuthHeaders(request)
                 .flatMap(next::exchange)
                 .flatMap(this::handleResponse);
     }
 
     /**
-     * Adds Bearer token to the request headers.
+     * Adds authentication headers using the configured strategy (Basic or OAuth).
      */
-    private Mono<ClientRequest> addBearerToken(ClientRequest request) {
+    private Mono<ClientRequest> addAuthHeaders(ClientRequest request) {
         return Mono.fromCallable(() -> {
-            String accessToken = authService.getAccessToken();
+            logger.debug("Adding authentication headers for request: {} {}", 
+                    request.method(), request.url());
 
-            logger.debug("Injecting Bearer token into request: {} {}",
-                    request.method(),
-                    request.url());
+            ClientRequest.Builder builder = ClientRequest.from(request);
+            HttpHeaders headers = new HttpHeaders();
+            
+            // Delegate to ServiceNowAuthService to add appropriate auth headers
+            authService.addAuthHeaders(headers);
+            
+            // Apply headers to request
+            headers.forEach((key, values) -> 
+                values.forEach(value -> builder.header(key, value))
+            );
+            
+            logger.debug("Authentication headers added successfully using {} mode", 
+                    authService.getAuthMode());
 
-            return ClientRequest.from(request)
-                    .header(HttpHeaders.AUTHORIZATION, BEARER_PREFIX + accessToken)
-                    .build();
+            return builder.build();
+        }).onErrorResume(e -> {
+            logger.error("Failed to add authentication headers: {}", e.getMessage());
+            return Mono.error(new RuntimeException("Authentication failed: " + e.getMessage(), e));
         });
     }
 
     /**
-     * Handles authentication errors with automatic token refresh and retry.
+     * Handles authentication errors.
+     * For OAuth: Future enhancement could implement automatic token refresh
+     * For Basic Auth: Logs the error for investigation
      */
     private Mono<ClientResponse> handleResponse(ClientResponse response) {
         if (response.statusCode() == HttpStatus.UNAUTHORIZED) {
-            logger.warn("401 Unauthorized received from ServiceNow.");
-
-            logger.info("Triggering token refresh due to 401 response.");
-            authService.refreshIfNeeded();
+            logger.error("401 Unauthorized received from ServiceNow. Auth mode: {}", 
+                    authService.getAuthMode());
+            logger.error("Request URL: {}", response.request().getURI());
+            
+            if ("oauth".equalsIgnoreCase(authService.getAuthMode())) {
+                logger.error("OAuth token may be expired or invalid. User needs to re-authenticate.");
+            } else {
+                logger.error("Basic Auth credentials may be incorrect. Check SERVICENOW_USERNAME and SERVICENOW_PASSWORD.");
+            }
         }
 
         return Mono.just(response);

@@ -1,63 +1,61 @@
 package com.enterprise.agent;
 
-import com.enterprise.agent.agent.ActionRouter;
-import com.enterprise.agent.agent.AgentDecision;
-import com.enterprise.agent.service.LLMService;
-import com.enterprise.agent.service.ServiceNowOAuthTokenProvider;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.enterprise.agent.agent.AgentOrchestrator;
+import com.enterprise.agent.context.UserContext;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.Scanner;
+import java.util.Set;
+import java.util.UUID;
 
 /**
- * Console runner for the Enterprise Agent using OAuth 2.0 authentication.
- * No longer requires user credential input as authentication is handled via OAuth.
- */
-/*
- * Console runner disabled for Authorization Code Flow.
- * Authentication is now browser-based via /oauth/callback.
+ * Console runner for testing the Enterprise Agent.
+ * Disabled by default - uncomment @Component to enable.
+ * 
+ * Para testing local con la nueva arquitectura AgentOrchestrator.
+ * Usa un usuario de prueba hardcodeado.
  */
 //@Component
 public class ConsoleAgentRunner implements CommandLineRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(ConsoleAgentRunner.class);
 
-    private final LLMService llmService;
-    private final ActionRouter actionRouter;
-    private final ServiceNowOAuthTokenProvider tokenProvider;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AgentOrchestrator orchestrator;
 
     private static final String YELLOW = "\u001B[33m";
     private static final String GREEN = "\u001B[32m";
     private static final String RED = "\u001B[31m";
     private static final String RESET = "\u001B[0m";
+    
+    private final String sessionId = UUID.randomUUID().toString();
 
-    public ConsoleAgentRunner(LLMService llmService, 
-                             ActionRouter actionRouter,
-                             ServiceNowOAuthTokenProvider tokenProvider) {
-        this.llmService = llmService;
-        this.actionRouter = actionRouter;
-        this.tokenProvider = tokenProvider;
+    public ConsoleAgentRunner(AgentOrchestrator orchestrator) {
+        this.orchestrator = orchestrator;
     }
 
     @Override
     public void run(String... args) {
         
         printWelcomeMessage();
-
-        // Validate OAuth authentication on startup
-        if (!validateOAuthAuthentication()) {
-            System.out.println(RED + "\n❌ OAuth authentication failed. Please check your configuration.\n" + RESET);
-            return;
-        }
+        
+        // Usuario de prueba
+        UserContext testUser = UserContext.builder()
+            .userId("console-test-user")
+            .username("test.console")
+            .email("test@company.com")
+            .fullName("Console Test User")
+            .roles(Set.of("user", "analyst"))
+            .requestTimestamp(System.currentTimeMillis())
+            .build();
 
         Scanner scanner = new Scanner(System.in);
 
         while (true) {
-            System.out.print("\nTú: ");
+            System.out.print("\n" + GREEN + "Tú: " + RESET);
             String input = scanner.nextLine();
 
             if (input == null || input.isBlank()) {
@@ -71,77 +69,56 @@ public class ConsoleAgentRunner implements CommandLineRunner {
             }
 
             try {
-                String modelResponse = llmService.classifyIntent(input);
-
-                AgentDecision decision = objectMapper.readValue(modelResponse, AgentDecision.class);
-                decision.setOriginalInput(input);
-
-                actionRouter.execute(decision);
+                // Crear AgentRequest
+                AgentOrchestrator.AgentRequest request = new AgentOrchestrator.AgentRequest();
+                request.setMessage(input);
+                request.setSessionId(sessionId);
+                request.setUserContext(testUser);
+                request.setMetadata(new HashMap<>());
+                
+                // Procesar con el orquestador
+                AgentOrchestrator.AgentResponse response = orchestrator.process(request);
+                
+                // Mostrar respuesta
+                if (response.isSuccess()) {
+                    System.out.println(YELLOW + "\n🤖 Agente: " + RESET + response.getMessage());
+                    System.out.println(GREEN + "   [Intent: " + response.getIntent() + 
+                                     ", Time: " + response.getExecutionTimeMs() + "ms]" + RESET);
+                } else {
+                    System.out.println(RED + "\n❌ Error: " + RESET + response.getMessage());
+                }
 
             } catch (Exception e) {
-                logger.debug("Model did not return valid JSON, treating as chat", e);
-                
-                // If the model didn't return valid JSON, treat as conversation
-                AgentDecision fallbackChat = new AgentDecision();
-                fallbackChat.setAction("CHAT");
-                fallbackChat.setOriginalInput(input);
-
-                actionRouter.execute(fallbackChat);
+                logger.error("Error processing console input", e);
+                System.out.println(RED + "\n❌ Error inesperado: " + e.getMessage() + RESET);
             }
         }
-    }
-
-    /**
-     * Validates OAuth authentication and displays current user info.
-     */
-    private boolean validateOAuthAuthentication() {
-        try {
-            System.out.println(YELLOW + "🔐 Validando autenticación OAuth..." + RESET);
-            
-            // This will trigger OAuth token acquisition and user validation
-            actionRouter.ensureUserAuthentication();
-            
-            String authenticatedUser = actionRouter.getAuthenticatedUsername();
-            String userSysId = actionRouter.getAuthenticatedUserSysId();
-            
-            System.out.println(GREEN + "✅ Autenticado exitosamente como: " + authenticatedUser + RESET);
-            System.out.println(GREEN + "📋 User ID: " + userSysId + RESET);
-            
-            // Verify we're using the expected OAuth user
-            String expectedUser = tokenProvider.getAuthenticatedUsername();
-            if (!expectedUser.equals(authenticatedUser)) {
-                System.out.println(YELLOW + "⚠️  Warning: Expected user '" + expectedUser + 
-                                 "' but authenticated as '" + authenticatedUser + "'" + RESET);
-            }
-            
-            return true;
-            
-        } catch (Exception e) {
-            logger.error("OAuth authentication failed", e);
-            System.out.println(RED + "❌ Error de autenticación: " + e.getMessage() + RESET);
-            return false;
-        }
+        
+        scanner.close();
     }
 
     private void printWelcomeMessage() {
         String welcomeMessage = """
 ╔══════════════════════════════════════════════════════════════╗
-║                Enterprise Service Agent                      ║
-║                     OAuth 2.0 Edition                       ║
+║            Enterprise Agent - Console Test Mode              ║
+║              Nueva Arquitectura Agéntica                     ║
 ╚══════════════════════════════════════════════════════════════╝
 
-🤖 Puedo ayudarte con:
-  • 🎫 Consultar incidentes (ej: "muéstrame INC0010001")
-  • 📊 Obtener estado y prioridad de tickets
-  • 📝 Crear nuevos incidentes
-  • 💬 Conversar de forma natural
-  • 🔍 Ver tu última incidencia
+🤖 Sistema agéntico con:
+  • 🧠 Clasificación inteligente de intenciones
+  • 🎯 Enrutamiento automático de acciones
+  • 💾 Memoria conversacional
+  • 🔍 Búsqueda semántica
+  • 📊 Análisis de incidentes
 
 ✨ Ejemplos de comandos:
   "¿Cuál es el estado del incidente INC0010001?"
-  "Muéstrame mi última incidencia"
-  "Crear un incidente por problema de red"
-  "¿Recuerdas qué incidentes hemos consultado?"
+  "Busca mis tickets abiertos"
+  "Analiza el ticket INC0010002"
+  "Resume el incidente INC0010003"
+  "¿Qué incidentes están críticos?"
+
+💬 También puedes conversar naturalmente
 
 🚪 Escribe 'exit' o 'salir' para terminar
 """;

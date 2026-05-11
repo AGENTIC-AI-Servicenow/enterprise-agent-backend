@@ -1,0 +1,347 @@
+{
+  "info": {
+    "name": "Enterprise Agent API - ServiceNow Integration",
+    "_postman_id": "enterprise-agent-api-001",
+    "description": "Colección completa para testing del Enterprise Agent Backend integrado con ServiceNow",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "servicenow_token",
+      "value": "YOUR_ACCESS_TOKEN_HERE",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "test_user_001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. OAuth Flow",
+      "item": [
+        {
+          "name": "Step 1 - Get Authorization Code (Browser)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://everisspainsludemo3.service-now.com/oauth_auth.do?response_type=code&client_id=7d069f603a114972b00d6b7d89d66de6&redirect_uri=http://localhost:8080/oauth/callback&state=test123",
+              "protocol": "https",
+              "host": ["everisspainsludemo3", "service-now", "com"],
+              "path": ["oauth_auth.do"],
+              "query": [
+                {"key": "response_type", "value": "code"},
+                {"key": "client_id", "value": "7d069f603a114972b00d6b7d89d66de6"},
+                {"key": "redirect_uri", "value": "http://localhost:8080/oauth/callback"},
+                {"key": "state", "value": "test123"}
+              ]
+            },
+            "description": "INSTRUCCIONES: 1. Copiar esta URL y abrirla en navegador 2. Iniciar sesión con credenciales de ServiceNow 3. Autorizar la aplicación 4. Copiar el code de la URL de redirección 5. Usar ese code en el Step 2"
+          }
+        },
+        {
+          "name": "Step 2 - Exchange Code for Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('servicenow_token', jsonData.access_token);",
+                  "    console.log('Token guardado:', jsonData.access_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/x-www-form-urlencoded"}],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {"key": "code", "value": "PASTE_AUTHORIZATION_CODE_HERE", "type": "text"}
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/oauth/token",
+              "host": ["{{base_url}}"],
+              "path": ["oauth", "token"]
+            },
+            "description": "Intercambia el authorization code por un access token"
+          }
+        },
+        {
+          "name": "Test OAuth Connection",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{servicenow_token}}"}],
+            "url": {
+              "raw": "{{base_url}}/api/oauth/test-connection",
+              "host": ["{{base_url}}"],
+              "path": ["api", "oauth", "test-connection"]
+            },
+            "description": "Verifica que el token OAuth es válido"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Agent Chat - Basic Tests",
+      "item": [
+        {
+          "name": "Test 1 - GET_INCIDENT (Specific)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Muéstrame el incidente INC0010001\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: GET_INCIDENT"
+          }
+        },
+        {
+          "name": "Test 2 - SEARCH_INCIDENTS (High Priority)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Busca todos los incidentes de alta prioridad que están abiertos\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: SEARCH_INCIDENTS"
+          }
+        },
+        {
+          "name": "Test 3 - ANALYZE_INCIDENT",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Analiza el incidente INC0010001 y dame recomendaciones\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: ANALYZE_INCIDENT"
+          }
+        },
+        {
+          "name": "Test 4 - CREATE_INCIDENT",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Necesito reportar un problema: la impresora del piso 3 no está funcionando. Es urgente.\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: CREATE_INCIDENT"
+          }
+        },
+        {
+          "name": "Test 5 - LIST_MY_INCIDENTS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Muéstrame mis incidentes abiertos\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: LIST_MY_INCIDENTS"
+          }
+        },
+        {
+          "name": "Test 6 - CHAT (Conversational)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Hola, ¿cómo estás?\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: CHAT"
+          }
+        },
+        {
+          "name": "Test 7 - SUMMARIZE_INCIDENTS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Dame un resumen de todos los incidentes de red de esta semana\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Intent esperado: SUMMARIZE_INCIDENTS"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Multi-Turn Conversation",
+      "item": [
+        {
+          "name": "Turn 1 - Initial Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Muéstrame mis incidentes abiertos\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"multiturno_session_001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Primer turno: establece contexto listando incidentes"
+          }
+        },
+        {
+          "name": "Turn 2 - Context Reference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Dame más detalles del primero\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"multiturno_session_001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Segundo turno: referencia anafórica al contexto anterior"
+          }
+        },
+        {
+          "name": "Turn 3 - Follow Up Action",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Authorization", "value": "Bearer {{servicenow_token}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"¿Puedes analizarlo y darme recomendaciones?\",\n  \"userId\": \"{{user_id}}\",\n  \"sessionId\": \"multiturno_session_001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/chat",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "chat"]
+            },
+            "description": "Tercer turno: acción sobre el incidente mencionado anteriormente"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Direct ServiceNow API",
+      "item": [
+        {
+          "name": "Get Incident by Number",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{servicenow_token}}"}],
+            "url": {
+              "raw": "https://everisspainsludemo3.service-now.com/api/now/table/incident?sysparm_query=number=INC0010001",
+              "protocol": "https",
+              "host": ["everisspainsludemo3", "service-now", "com"],
+              "path": ["api", "now", "table", "incident"],
+              "query": [{"key": "sysparm_query", "value": "number=INC0010001"}]
+            },
+            "description": "Test directo a la API de ServiceNow para verificar conectividad"
+          }
+        },
+        {
+          "name": "List Recent Incidents",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{servicenow_token}}"}],
+            "url": {
+              "raw": "https://everisspainsludemo3.service-now.com/api/now/table/incident?sysparm_limit=10&sysparm_display_value=true",
+              "protocol": "https",
+              "host": ["everisspainsludemo3", "service-now", "com"],
+              "path": ["api", "now", "table", "incident"],
+              "query": [
+                {"key": "sysparm_limit", "value": "10"},
+                {"key": "sysparm_display_value", "value": "true"}
+              ]
+            },
+            "description": "Lista los últimos 10 incidentes para validar acceso"
+          }
+        }
+      ]
+    }
+  ]
+}

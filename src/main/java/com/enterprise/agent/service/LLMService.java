@@ -40,6 +40,19 @@ public class LLMService {
     // =====================================================
     // 1️⃣ CLASIFICADOR DE INTENCIÓN (JSON ESTRICTO)
     // =====================================================
+    
+    /**
+     * Método genérico para clasificación con system prompt personalizado
+     * Usado por IntentClassifier
+     */
+    public String classify(String systemPrompt, String userInput) {
+        String fullPrompt = systemPrompt + "\n\n" + userInput;
+        return generate(fullPrompt, 0.0, 300);
+    }
+    
+    /**
+     * Método legacy para clasificación simple
+     */
     public String classifyIntent(String userInput) {
 
         String systemPrompt = """
@@ -135,7 +148,7 @@ Usuario:
     // =====================================================
     // MÉTODO CENTRALIZADO
     // =====================================================
-    private String generate(String prompt, double temperature, int maxTokens) {
+    public String generate(String prompt, double temperature, int maxTokens) {
 
         Map<String, Object> body = new HashMap<>();
         body.put("model", model);

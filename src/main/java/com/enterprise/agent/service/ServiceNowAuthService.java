@@ -1,122 +1,118 @@
 package com.enterprise.agent.service;
 
-import com.enterprise.agent.dto.ServiceNowTokenResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.BodyInserters;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
-
-import java.time.Instant;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Service responsible for handling OAuth2 Client Credentials flow with ServiceNow.
- *
- * Responsibilities:
- * - Retrieve access_token using grant_type=client_credentials
- * - Cache token in memory
- * - Auto refresh when close to expiration
- *
- * Designed for future extension to support additional grant types.
+ * Central authentication service that selects and applies the appropriate
+ * authentication strategy (Basic Auth or OAuth) based on configuration.
+ * 
+ * Enterprise Pattern: Strategy Pattern + Factory Pattern
+ * 
+ * This service:
+ * - Abstracts authentication complexity from API clients
+ * - Enables hot-swapping between auth methods without code changes
+ * - Provides unified error handling and logging
+ * - Supports gradual migration from Basic to OAuth
  */
 @Service
 public class ServiceNowAuthService {
-
-    private static final Logger logger = LoggerFactory.getLogger(ServiceNowAuthService.class);
-
-    private final WebClient webClient;
-
-    @Value("${servicenow.oauth.token-url}")
-    private String tokenUrl;
-
-    @Value("${servicenow.oauth.client-id}")
-    private String clientId;
-
-    @Value("${servicenow.oauth.client-secret}")
-    private String clientSecret;
-
-    @Value("${servicenow.oauth.token-expiry-margin-seconds:30}")
-    private long expiryMarginSeconds;
-
-    private final AtomicReference<String> cachedToken = new AtomicReference<>();
-    private volatile Instant tokenExpiryTime = Instant.MIN;
-
-    public ServiceNowAuthService(WebClient.Builder builder) {
-        this.webClient = builder.build();
+    
+    private static final Logger log = LoggerFactory.getLogger(ServiceNowAuthService.class);
+    
+    @Value("${servicenow.auth.mode:oauth}")
+    private String authMode;
+    
+    private final BasicAuthStrategy basicAuthStrategy;
+    private final OAuthStrategy oAuthStrategy;
+    
+    public ServiceNowAuthService(BasicAuthStrategy basicAuthStrategy, 
+                                 OAuthStrategy oAuthStrategy) {
+        this.basicAuthStrategy = basicAuthStrategy;
+        this.oAuthStrategy = oAuthStrategy;
     }
-
+    
     /**
-     * Returns a valid access token, refreshing if needed.
+     * Gets the currently active authentication strategy based on configuration
+     * 
+     * @return The active authentication strategy
      */
-    public synchronized String getAccessToken() {
-        if (isTokenExpired()) {
-            logger.debug("Access token missing or expiring soon. Triggering refresh.");
-            refreshToken();
+    public ServiceNowAuthStrategy getActiveStrategy() {
+        if ("basic".equalsIgnoreCase(authMode)) {
+            log.debug("Using Basic Authentication strategy");
+            return basicAuthStrategy;
         } else {
-            logger.debug("Using cached OAuth token. Expires at: {}", tokenExpiryTime);
+            log.debug("Using OAuth Authentication strategy");
+            return oAuthStrategy;
         }
-        return cachedToken.get();
     }
-
+    
     /**
-     * Forces token refresh (used after 401).
+     * Adds authentication headers to an HTTP request
+     * 
+     * @param headers The HttpHeaders to modify
+     * @throws IllegalStateException if authentication is not properly configured
      */
-    public synchronized void refreshIfNeeded() {
-        logger.info("Forcing OAuth token refresh due to 401 or manual trigger.");
-        refreshToken();
+    public void addAuthHeaders(HttpHeaders headers) {
+        ServiceNowAuthStrategy strategy = getActiveStrategy();
+        
+        if (!strategy.isReady()) {
+            String errorMsg = String.format(
+                "Authentication not ready. Mode: %s. " +
+                "For Basic Auth: Set SERVICENOW_USERNAME and SERVICENOW_PASSWORD. " +
+                "For OAuth: Authenticate via /oauth/authorize endpoint.",
+                authMode
+            );
+            log.error(errorMsg);
+            throw new IllegalStateException(errorMsg);
+        }
+        
+        strategy.addAuthHeaders(headers);
+        log.debug("Authentication headers added successfully using {} mode", strategy.getAuthMode());
     }
-
-    private boolean isTokenExpired() {
-        return cachedToken.get() == null ||
-                Instant.now().isAfter(tokenExpiryTime.minusSeconds(expiryMarginSeconds));
+    
+    /**
+     * Checks if the current authentication configuration is ready to use
+     * 
+     * @return true if auth is configured and ready
+     */
+    public boolean isAuthReady() {
+        return getActiveStrategy().isReady();
     }
-
-    private void refreshToken() {
-        logger.debug("Requesting new OAuth token from ServiceNow using Client Credentials grant. Token URL: {}", tokenUrl);
-
-        try {
-            ServiceNowTokenResponse response = webClient.post()
-                    .uri(tokenUrl)
-                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                    .body(BodyInserters.fromFormData("grant_type", "client_credentials")
-                            .with("client_id", clientId)
-                            .with("client_secret", clientSecret))
-                    .retrieve()
-                    .onStatus(status -> status.isError(), clientResponse ->
-                            clientResponse.bodyToMono(String.class)
-                                    .doOnNext(body -> logger.error(
-                                            "Token endpoint returned error. HTTP {} - Body: {}",
-                                            clientResponse.statusCode(),
-                                            body))
-                                    .then(Mono.error(new RuntimeException(
-                                            "Token endpoint error: " + clientResponse.statusCode())))
-                    )
-                    .bodyToMono(ServiceNowTokenResponse.class)
-                    .block();
-
-            if (response == null || response.getAccessToken() == null) {
-                throw new IllegalStateException("Invalid token response from ServiceNow");
-            }
-
-            String token = response.getAccessToken();
-            cachedToken.set(token);
-            tokenExpiryTime = Instant.now().plusSeconds(response.getExpiresIn());
-
-            logger.debug("OAuth token received. Length: {} chars, Last 6 chars: {}",
-                    token.length(),
-                    token.length() > 6 ? token.substring(token.length() - 6) : "N/A");
-
-            logger.debug("Token expires at: {} (in {} seconds)",
-                    tokenExpiryTime,
-                    response.getExpiresIn());
-
-        } catch (Exception e) {
-            logger.error("OAuth token retrieval failed", e);
-            throw new RuntimeException("Failed to retrieve OAuth token", e);
+    
+    /**
+     * Gets the name of the currently active authentication mode
+     * 
+     * @return "basic" or "oauth"
+     */
+    public String getAuthMode() {
+        return authMode;
+    }
+    
+    /**
+     * For OAuth mode: sets the current user context for subsequent requests
+     * This is a no-op for Basic Auth mode.
+     * 
+     * @param userId The user ID to set in context
+     */
+    public void setOAuthUserContext(String userId) {
+        if ("oauth".equalsIgnoreCase(authMode) && oAuthStrategy != null) {
+            oAuthStrategy.setCurrentUserId(userId);
+            log.debug("Set OAuth user context: {}", userId);
+        }
+    }
+    
+    /**
+     * For OAuth mode: clears the current user context after request processing
+     * This is a no-op for Basic Auth mode.
+     */
+    public void clearOAuthUserContext() {
+        if ("oauth".equalsIgnoreCase(authMode) && oAuthStrategy != null) {
+            oAuthStrategy.clearCurrentUserId();
+            log.debug("Cleared OAuth user context");
         }
     }
 }
