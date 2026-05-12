@@ -1,0 +1,168 @@
+import type { 
+  AgentRequest, 
+  AgentResponse, 
+  Incident, 
+  IncidentSummary,
+  ApiResponse 
+} from '@/types';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public data?: any
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function fetchApi<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const token = typeof window !== 'undefined' 
+    ? localStorage.getItem('access_token') 
+    : null;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      ...headers,
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new ApiError(
+      response.status,
+      errorData.message || `HTTP ${response.status}: ${response.statusText}`,
+      errorData
+    );
+  }
+
+  return response.json();
+}
+
+// ============================================================================
+// AI AGENT API
+// ============================================================================
+
+export const agentApi = {
+  async chat(request: AgentRequest): Promise<AgentResponse> {
+    return fetchApi<AgentResponse>('/api/agent/chat', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  },
+
+  async getConversationHistory(conversationId: string) {
+    return fetchApi(`/api/agent/conversations/${conversationId}`);
+  },
+};
+
+// ============================================================================
+// INCIDENTS API
+// ============================================================================
+
+export const incidentsApi = {
+  async getAll(params?: { 
+    state?: string; 
+    priority?: string; 
+    limit?: number;
+    offset?: number;
+  }): Promise<ApiResponse<Incident[]>> {
+    const queryParams = new URLSearchParams();
+    if (params?.state) queryParams.append('state', params.state);
+    if (params?.priority) queryParams.append('priority', params.priority);
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    if (params?.offset) queryParams.append('offset', params.offset.toString());
+
+    const query = queryParams.toString();
+    return fetchApi<ApiResponse<Incident[]>>(
+      `/api/incidents${query ? `?${query}` : ''}`
+    );
+  },
+
+  async getById(id: string): Promise<ApiResponse<Incident>> {
+    return fetchApi<ApiResponse<Incident>>(`/api/incidents/${id}`);
+  },
+
+  async getSummary(): Promise<ApiResponse<IncidentSummary>> {
+    return fetchApi<ApiResponse<IncidentSummary>>('/api/incidents/summary');
+  },
+
+  async create(data: Partial<Incident>): Promise<ApiResponse<Incident>> {
+    return fetchApi<ApiResponse<Incident>>('/api/incidents', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async update(
+    id: string, 
+    data: Partial<Incident>
+  ): Promise<ApiResponse<Incident>> {
+    return fetchApi<ApiResponse<Incident>>(`/api/incidents/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// ============================================================================
+// AUTH API
+// ============================================================================
+
+export const authApi = {
+  async login(username: string, password: string) {
+    return fetchApi('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+  },
+
+  async logout() {
+    return fetchApi('/api/auth/logout', {
+      method: 'POST',
+    });
+  },
+
+  async getCurrentUser() {
+    return fetchApi('/api/auth/me');
+  },
+
+  async initiateOAuth() {
+    return fetchApi<{ authorizationUrl: string }>('/api/oauth/authorize');
+  },
+
+  async handleCallback(code: string) {
+    return fetchApi('/api/oauth/callback', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  },
+};
+
+// ============================================================================
+// HEALTH CHECK
+// ============================================================================
+
+export const healthApi = {
+  async check(): Promise<{ status: string; timestamp: string }> {
+    return fetchApi('/actuator/health');
+  },
+};
+
+export { ApiError };

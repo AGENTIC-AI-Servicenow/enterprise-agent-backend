@@ -6,7 +6,7 @@ servicenow:
     url: https://everisspainsludemo3.service-now.com
   base-url: https://everisspainsludemo3.service-now.com
   auth:
-    mode: basic # basic or oauth
+    mode: oauth # basic or oauth
     username: ${SERVICENOW_USERNAME:your-username}
     password: ${SERVICENOW_PASSWORD:your-password}
   oauth:

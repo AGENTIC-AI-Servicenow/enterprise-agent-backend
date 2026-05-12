@@ -64,6 +64,41 @@ public class ServiceNowClient {
     }
 
     /**
+     * Retrieves an incident by sys_id using the Table API direct record access.
+     */
+    public JsonNode getIncidentBySysId(String sysId) {
+        logger.info("Retrieving incident by sys_id: {}", sysId);
+
+        try {
+            return webClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/now/table/incident/" + sysId)
+                            .queryParam("sysparm_fields",
+                                       "sys_id,number,short_description,description,state,priority," +
+                                       "caller_id,assigned_to,category,urgency,impact," +
+                                       "sys_created_on,sys_updated_on")
+                            .build())
+                    .retrieve()
+                    .onStatus(
+                            status -> status.is4xxClientError(),
+                            response -> handleClientError(response, "get incident by sys_id " + sysId)
+                    )
+                    .onStatus(
+                            status -> status.is5xxServerError(),
+                            response -> handleServerError(response, "get incident by sys_id " + sysId)
+                    )
+                    .bodyToMono(JsonNode.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                            .filter(this::isRetryableException))
+                    .block();
+
+        } catch (Exception e) {
+            logger.error("Failed to retrieve incident by sys_id {}", sysId, e);
+            throw new RuntimeException("Failed to retrieve incident by sys_id " + sysId + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Retrieves an incident by number using OAuth authentication.
      */
     public JsonNode getIncidentByNumber(String number) {
@@ -95,6 +130,80 @@ public class ServiceNowClient {
         } catch (Exception e) {
             logger.error("Failed to retrieve incident {}", number, e);
             throw new RuntimeException("Failed to retrieve incident " + number + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Retrieves all incidents with optional filtering and pagination.
+     * For admin/reporting use cases where caller filtering is not needed.
+     * 
+     * @param state Filter by state (optional)
+     * @param priority Filter by priority (optional)
+     * @param assignedTo Filter by assigned_to (optional)
+     * @param limit Maximum number of results
+     * @param offset Pagination offset
+     * @return JsonNode with incident list
+     */
+    public JsonNode getAllIncidents(String state, Integer priority, String assignedTo, 
+                                    int limit, int offset) {
+        logger.info("Retrieving all incidents - state={}, priority={}, limit={}, offset={}", 
+                    state, priority, limit, offset);
+        
+        try {
+            StringBuilder queryBuilder = new StringBuilder();
+            
+            // Build query string with filters
+            if (state != null && !state.isEmpty()) {
+                queryBuilder.append("state=").append(state);
+            }
+            if (priority != null) {
+                if (queryBuilder.length() > 0) queryBuilder.append("^");
+                queryBuilder.append("priority=").append(priority);
+            }
+            if (assignedTo != null && !assignedTo.isEmpty()) {
+                if (queryBuilder.length() > 0) queryBuilder.append("^");
+                queryBuilder.append("assigned_to.user_name=").append(assignedTo);
+            }
+            
+            String query = queryBuilder.length() > 0 ? queryBuilder.toString() : null;
+            
+            var uriSpec = webClient.get()
+                    .uri(uriBuilder -> {
+                        var builder = uriBuilder
+                                .path("/api/now/table/incident")
+                                .queryParam("sysparm_fields", 
+                                           "sys_id,number,short_description,state,priority," +
+                                           "assigned_to.user_name,category,sys_created_on,sys_updated_on," +
+                                           "caller_id.name,urgency,impact")
+                                .queryParam("sysparm_limit", limit)
+                                .queryParam("sysparm_offset", offset)
+                                .queryParam("sysparm_order_by", "sys_created_on DESC");
+                        
+                        if (query != null) {
+                            builder.queryParam("sysparm_query", query);
+                        }
+                        
+                        return builder.build();
+                    });
+            
+            return uriSpec
+                    .retrieve()
+                    .onStatus(
+                            status -> status.is4xxClientError(),
+                            response -> handleClientError(response, "get all incidents")
+                    )
+                    .onStatus(
+                            status -> status.is5xxServerError(),
+                            response -> handleServerError(response, "get all incidents")
+                    )
+                    .bodyToMono(JsonNode.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                            .filter(this::isRetryableException))
+                    .block();
+                    
+        } catch (Exception e) {
+            logger.error("Failed to retrieve all incidents", e);
+            throw new RuntimeException("Failed to retrieve all incidents: " + e.getMessage(), e);
         }
     }
 

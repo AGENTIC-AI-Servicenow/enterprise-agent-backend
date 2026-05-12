@@ -1,5 +1,6 @@
 package com.enterprise.agent.controller;
 
+import com.enterprise.agent.service.BasicAuthSessionService;
 import com.enterprise.agent.service.OAuthAuthorizationService;
 import com.enterprise.agent.service.UserContextService;
 import com.enterprise.agent.client.ServiceNowClient;
@@ -25,11 +26,88 @@ public class AuthorizationCodeController {
 
     private final OAuthAuthorizationService authorizationService;
     private final UserContextService userContextService;
+    private final BasicAuthSessionService basicAuthSessionService;
 
     public AuthorizationCodeController(OAuthAuthorizationService authorizationService,
-                                     UserContextService userContextService) {
+                                       UserContextService userContextService,
+                                       BasicAuthSessionService basicAuthSessionService) {
         this.authorizationService = authorizationService;
         this.userContextService = userContextService;
+        this.basicAuthSessionService = basicAuthSessionService;
+    }
+
+    // =========================================================================
+    // Basic Auth login / logout
+    // =========================================================================
+
+    /**
+     * Creates a Basic Auth session for a ServiceNow user.
+     *
+     * POST /api/auth/login
+     * Body: { "username": "...", "password": "..." }
+     *
+     * Returns a userId that must be sent as X-User-Id header in subsequent calls.
+     */
+    @PostMapping("/login")
+    public ResponseEntity<Map<String, Object>> login(@RequestBody Map<String, String> credentials) {
+        Map<String, Object> response = new HashMap<>();
+
+        String username = credentials.getOrDefault("username", "").trim();
+        String password = credentials.getOrDefault("password", "");
+
+        if (username.isEmpty() || password.isEmpty()) {
+            response.put("success", false);
+            response.put("message", "username and password are required");
+            return ResponseEntity.badRequest().body(response);
+        }
+
+        try {
+            String userId = basicAuthSessionService.createSession(username, password);
+
+            response.put("success", true);
+            response.put("message", "Login successful. Include X-User-Id header in all subsequent requests.");
+            response.put("userId", userId);
+            response.put("username", username);
+            response.put("authMode", "basic");
+            response.put("timestamp", System.currentTimeMillis());
+
+            logger.info("Basic Auth session created for username: {} -> userId: {}", username, userId);
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            logger.error("Login failed for username: {}", username, e);
+            response.put("success", false);
+            response.put("message", "Login failed: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Removes a Basic Auth session.
+     *
+     * DELETE /api/auth/login/{userId}
+     */
+    @DeleteMapping("/login/{userId}")
+    public ResponseEntity<Map<String, Object>> logout(@PathVariable String userId) {
+        Map<String, Object> response = new HashMap<>();
+
+        if (!basicAuthSessionService.hasSession(userId)) {
+            response.put("success", false);
+            response.put("message", "Session not found for userId: " + userId);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+        }
+
+        String username = basicAuthSessionService.getUsername(userId);
+        basicAuthSessionService.invalidateSession(userId);
+
+        response.put("success", true);
+        response.put("message", "Session invalidated successfully");
+        response.put("userId", userId);
+        response.put("username", username);
+        response.put("timestamp", System.currentTimeMillis());
+
+        logger.info("Basic Auth session invalidated for userId: {} (username: {})", userId, username);
+        return ResponseEntity.ok(response);
     }
 
     /**
