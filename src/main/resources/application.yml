@@ -15,6 +15,12 @@ servicenow:
     authorization-url: https://everisspainsludemo3.service-now.com/oauth_auth.do
     token-url: https://everisspainsludemo3.service-now.com/oauth_token.do
     redirect-uri: http://localhost:8080/oauth/callback
+    # OAuth scopes requested during authorize and token exchange.
+    # Must match what is configured in the ServiceNow Application Registry for this client.
+    scope: useraccount
+
+frontend:
+  url: ${FRONTEND_URL:http://localhost:3000}
 
 ollama:
   model: qwen2.5:7b

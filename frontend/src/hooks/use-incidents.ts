@@ -27,10 +27,15 @@ export function useIncidents(options: UseIncidentsOptions = {}) {
     queryKey: ['incidents'],
     queryFn: async () => {
       const response = await incidentsApi.getAll();
+      // Backend returns ApiResponse<Incident[]> with { success, data }
+      if (!response.success && !response.data) {
+        throw new Error(response.error || 'Failed to load incidents');
+      }
       return response.data || [];
     },
-    staleTime: 30000, // 30 segundos
-    refetchOnWindowFocus: true,
+    staleTime: 30000,        // 30 segundos
+    retry: 1,                 // Solo 1 reintento para reducir ruido en consola
+    refetchOnWindowFocus: false,
     enabled: options.enabled !== false,
     refetchInterval: options.refetchInterval,
   });
@@ -48,7 +53,9 @@ export function useIncidents(options: UseIncidentsOptions = {}) {
       }
       return response.data;
     },
-    staleTime: 60000, // 1 minuto
+    staleTime: 60000,         // 1 minuto
+    retry: 1,
+    refetchOnWindowFocus: false,
     enabled: options.enabled !== false,
   });
 

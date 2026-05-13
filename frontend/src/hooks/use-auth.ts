@@ -3,65 +3,73 @@
 import { useState, useEffect } from 'react';
 
 /**
- * Hook para manejar autenticación OAuth con ServiceNow
- * 
- * MVP: Almacena token en localStorage
- * Producción: Migrar a httpOnly cookies + refresh tokens
+ * Hook para manejar autenticación OAuth con ServiceNow.
+ *
+ * Flujo:
+ *  1. El usuario hace clic en "Sign in with ServiceNow"
+ *  2. El frontend redirige a GET /oauth/authorize (backend)
+ *  3. El backend redirige a ServiceNow para que el usuario autorice
+ *  4. ServiceNow llama al backend GET /oauth/callback?code=XXX
+ *  5. El backend intercambia el código por tokens y redirige a
+ *     /auth/callback?userId=YYY&success=true (frontend)
+ *  6. La página /auth/callback guarda user_id en localStorage
+ *  7. api-client.ts adjunta X-User-Id en cada petición
+ *
+ * MVP: userId almacenado en localStorage
+ * Producción: httpOnly cookies + refresh tokens
  */
 
 interface AuthState {
   isAuthenticated: boolean;
-  accessToken: string | null;
+  userId: string | null;
   isLoading: boolean;
 }
+
+const USER_ID_KEY = 'user_id';
 
 export function useAuth() {
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
-    accessToken: null,
+    userId: null,
     isLoading: true,
   });
 
   useEffect(() => {
-    // Verificar si hay token al montar el componente
-    const token = localStorage.getItem('servicenow_access_token');
+    const userId = localStorage.getItem(USER_ID_KEY);
     setAuthState({
-      isAuthenticated: !!token,
-      accessToken: token,
+      isAuthenticated: !!userId,
+      userId,
       isLoading: false,
     });
   }, []);
 
-  const login = (accessToken: string) => {
-    localStorage.setItem('servicenow_access_token', accessToken);
+  const login = (userId: string) => {
+    localStorage.setItem(USER_ID_KEY, userId);
+    localStorage.setItem('auth_method', 'oauth');
     setAuthState({
       isAuthenticated: true,
-      accessToken,
+      userId,
       isLoading: false,
     });
   };
 
   const logout = () => {
-    localStorage.removeItem('servicenow_access_token');
+    localStorage.removeItem(USER_ID_KEY);
+    localStorage.removeItem('auth_method');
     setAuthState({
       isAuthenticated: false,
-      accessToken: null,
+      userId: null,
       isLoading: false,
     });
   };
 
+  /**
+   * Inicia el flujo OAuth delegando al backend.
+   * El backend redirige a ServiceNow y maneja el callback.
+   */
   const initiateOAuth = () => {
-    const clientId = process.env.NEXT_PUBLIC_OAUTH_CLIENT_ID;
-    const instance = process.env.NEXT_PUBLIC_SERVICENOW_INSTANCE;
-    const redirectUri = `${window.location.origin}/auth/callback`;
-
-    if (!clientId || !instance) {
-      console.error('OAuth configuration missing');
-      return;
-    }
-
-    const authUrl = `${instance}/oauth_auth.do?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-    window.location.href = authUrl;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+    window.location.href = `${apiUrl}/oauth/authorize`;
   };
 
   return {

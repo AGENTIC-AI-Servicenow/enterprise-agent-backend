@@ -40,38 +40,34 @@ public class ServiceNowWebClientFilter implements ExchangeFilterFunction {
             return next.exchange(request);
         }
 
-        return addAuthHeaders(request)
-                .flatMap(next::exchange)
-                .flatMap(this::handleResponse);
-    }
+        try {
+            logger.debug("Adding authentication headers for request: {} {}", request.method(), request.url());
 
-    /**
-     * Adds authentication headers using the configured strategy (Basic or OAuth).
-     */
-    private Mono<ClientRequest> addAuthHeaders(ClientRequest request) {
-        return Mono.fromCallable(() -> {
-            logger.debug("Adding authentication headers for request: {} {}", 
-                    request.method(), request.url());
+            HttpHeaders authHeaders = new HttpHeaders();
+            authService.addAuthHeaders(authHeaders);
 
-            ClientRequest.Builder builder = ClientRequest.from(request);
-            HttpHeaders headers = new HttpHeaders();
-            
-            // Delegate to ServiceNowAuthService to add appropriate auth headers
-            authService.addAuthHeaders(headers);
-            
-            // Apply headers to request
-            headers.forEach((key, values) -> 
-                values.forEach(value -> builder.header(key, value))
-            );
-            
-            logger.debug("Authentication headers added successfully using {} mode", 
-                    authService.getAuthMode());
+            ClientRequest mutated = ClientRequest.from(request)
+                    .headers(h -> authHeaders.forEach((k, v) -> h.put(k, v)))
+                    .build();
 
-            return builder.build();
-        }).onErrorResume(e -> {
-            logger.error("Failed to add authentication headers: {}", e.getMessage());
+            // Debug: verify Authorization header is actually present in the final ClientRequest
+            String auth = mutated.headers().getFirst(HttpHeaders.AUTHORIZATION);
+            if (auth == null) {
+                logger.warn("Authorization header is NULL after mutation for request: {} {}", mutated.method(), mutated.url());
+            } else {
+                String preview = auth.length() > 15 ? auth.substring(0, 15) + "..." : auth;
+                logger.info("Authorization header present. length={}, preview='{}' for {} {}",
+                        auth.length(), preview, mutated.method(), mutated.url());
+            }
+
+            logger.debug("Authentication headers added successfully using {} mode", authService.getAuthMode());
+
+            return next.exchange(mutated).flatMap(this::handleResponse);
+
+        } catch (Exception e) {
+            logger.error("Failed to add authentication headers: {}", e.getMessage(), e);
             return Mono.error(new RuntimeException("Authentication failed: " + e.getMessage(), e));
-        });
+        }
     }
 
     /**

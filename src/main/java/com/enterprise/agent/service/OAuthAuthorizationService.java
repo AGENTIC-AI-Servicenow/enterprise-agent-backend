@@ -13,6 +13,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +45,9 @@ public class OAuthAuthorizationService {
     @Value("${servicenow.oauth.authorization-url}")
     private String authorizationUrl;
 
+    @Value("${servicenow.oauth.scope:useraccount}")
+    private String scope;
+
     @Value("${servicenow.oauth.token-expiry-margin-seconds:30}")
     private int expirationMarginSeconds;
 
@@ -64,11 +69,20 @@ public class OAuthAuthorizationService {
      * Builds the ServiceNow Authorization URL for Authorization Code flow.
      */
     public String buildAuthorizationUrl(String state) {
+        // ServiceNow expects the scopes requested in the initial authorize step
+        // to match what you'll ask for later when exchanging the code for tokens.
+        //
+        // NOTE: "useraccount" alone is not sufficient for Table API access; we also
+        // need at least "useraccount_read" and "useraccount_write" for typical CRUD use cases.
+        String encodedRedirect = URLEncoder.encode(redirectUri, StandardCharsets.UTF_8);
+        String encodedScope = URLEncoder.encode(scope, StandardCharsets.UTF_8);
+
         return String.format(
-                "%s?response_type=code&client_id=%s&redirect_uri=%s&scope=useraccount&state=%s",
+                "%s?response_type=code&client_id=%s&redirect_uri=%s&scope=%s&state=%s",
                 authorizationUrl,
                 clientId,
-                redirectUri,
+                encodedRedirect,
+                encodedScope,
                 state
         );
     }
@@ -81,6 +95,18 @@ public class OAuthAuthorizationService {
      * @throws RuntimeException if code exchange fails
      */
     public String exchangeCodeForToken(String authorizationCode) {
+        return exchangeCodeForToken(authorizationCode, null);
+    }
+
+    /**
+     * Exchanges authorization code for access and refresh tokens, storing them
+     * under a stable key that the frontend will send back via X-User-Id.
+     *
+     * @param authorizationCode The authorization code from ServiceNow
+     * @param userKey           Stable key to store tokens under (recommended: OAuth state). If null/blank, falls back to generated key.
+     * @return The user key used to store the tokens (what the frontend must use as X-User-Id)
+     */
+    public String exchangeCodeForToken(String authorizationCode, String userKey) {
         logger.info("Exchanging authorization code for access token");
 
         try {
@@ -90,7 +116,8 @@ public class OAuthAuthorizationService {
             formData.add("redirect_uri", redirectUri);
             formData.add("client_id", clientId);
             formData.add("client_secret", clientSecret);
-            formData.add("scope", "useraccount");
+            // Must match scopes requested at /oauth/authorize
+            formData.add("scope", scope);
 
             JsonNode tokenResponse = oauthWebClient.post()
                     .uri(tokenUrl)
@@ -124,15 +151,16 @@ public class OAuthAuthorizationService {
                 throw new RuntimeException("Invalid token response received");
             }
 
-            // Extract user information from token response or use a placeholder
-            // In a real implementation, you might decode the JWT token or make an API call
-            String userId = extractUserIdFromToken(tokenResponse);
-            
-            // Store tokens for this user
-            storeUserTokens(userId, tokenResponse);
-            
-            logger.info("Authorization code successfully exchanged for user: {}", userId);
-            return userId;
+            // Use provided stable userKey (state) when available; otherwise fallback.
+            String resolvedUserId = (userKey != null && !userKey.isBlank())
+                    ? userKey
+                    : extractUserIdFromToken(tokenResponse);
+
+            // Store tokens for this user key
+            storeUserTokens(resolvedUserId, tokenResponse);
+
+            logger.info("Authorization code successfully exchanged for userKey: {}", resolvedUserId);
+            return resolvedUserId;
 
         } catch (Exception e) {
             logger.error("Failed to exchange authorization code for token", e);
@@ -194,7 +222,8 @@ public class OAuthAuthorizationService {
             formData.add("refresh_token", tokenInfo.refreshToken);
             formData.add("client_id", clientId);
             formData.add("client_secret", clientSecret);
-            formData.add("scope", "useraccount");
+            // Must match scopes requested at /oauth/authorize
+            formData.add("scope", scope);
 
             JsonNode tokenResponse = oauthWebClient.post()
                     .uri(tokenUrl)
@@ -208,6 +237,15 @@ public class OAuthAuthorizationService {
                                         logger.error("Token refresh failed for user {}: {}", userId, errorBody);
                                         return new RuntimeException(
                                                 "Token refresh failed: " + errorBody);
+                                    })
+                    )
+                    .onStatus(
+                            status -> status.is5xxServerError(),
+                            response -> response.bodyToMono(String.class)
+                                    .map(errorBody -> {
+                                        logger.error("ServiceNow server error during token refresh for user {}: {}", userId, errorBody);
+                                        return new RuntimeException(
+                                                "ServiceNow server error during token refresh: " + errorBody);
                                     })
                     )
                     .bodyToMono(JsonNode.class)
@@ -306,6 +344,14 @@ public class OAuthAuthorizationService {
      */
     public int getActiveSessionCount() {
         return userTokens.size();
+    }
+
+    /**
+     * Returns the set of user keys that currently have tokens stored in-memory.
+     * Diagnostic only (does not expose tokens).
+     */
+    public java.util.Set<String> getSessionKeys() {
+        return userTokens.keySet();
     }
 
     /**

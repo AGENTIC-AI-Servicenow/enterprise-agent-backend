@@ -3,6 +3,7 @@ package com.enterprise.agent.controller;
 import com.enterprise.agent.service.OAuthAuthorizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,6 +24,9 @@ public class OAuthCallbackController {
     private static final Logger logger = LoggerFactory.getLogger(OAuthCallbackController.class);
 
     private final OAuthAuthorizationService authorizationService;
+
+    @Value("${frontend.url:http://localhost:3000}")
+    private String frontendUrl;
 
     public OAuthCallbackController(OAuthAuthorizationService authorizationService) {
         this.authorizationService = authorizationService;
@@ -78,38 +82,26 @@ public class OAuthCallbackController {
         }
 
         try {
-            // Exchange authorization code for tokens
-            String userId = authorizationService.exchangeCodeForToken(code);
-            
-            logger.info("OAuth authorization successful for user: {}", userId);
+            // Use state as a stable per-user/session key for token storage.
+            // This prevents mismatches between frontend X-User-Id and backend token map.
+            String userKey = (state != null && !state.isBlank()) ? state : null;
 
-            // In a real application, you might:
-            // 1. Create a user session
-            // 2. Set authentication cookies
-            // 3. Redirect to the application dashboard
-            // 4. Store user context for subsequent API calls
-            
-            Map<String, Object> successResponse = new HashMap<>();
-            successResponse.put("success", true);
-            successResponse.put("message", "OAuth authorization successful");
-            successResponse.put("userId", userId);
-            successResponse.put("sessionActive", authorizationService.hasValidToken(userId));
-            successResponse.put("timestamp", System.currentTimeMillis());
-            successResponse.put("nextSteps", "User is now authenticated and can make API calls");
-            
-            return ResponseEntity.ok(successResponse);
+            // Exchange authorization code for tokens
+            String userId = authorizationService.exchangeCodeForToken(code, userKey);
+
+            logger.info("OAuth authorization successful for user: {}, redirecting to frontend", userId);
+
+            // Redirect to the frontend callback page so it can store the userId (key)
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .location(java.net.URI.create(frontendUrl + "/auth/callback?userId=" + userId + "&success=true"))
+                    .build();
 
         } catch (Exception e) {
             logger.error("Failed to process OAuth callback", e);
-            
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("success", false);
-            errorResponse.put("error", "token_exchange_failed");
-            errorResponse.put("message", "Failed to exchange authorization code for access token");
-            errorResponse.put("details", e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .location(java.net.URI.create(frontendUrl + "/auth/callback?error=token_exchange_failed&details="
+                            + java.net.URLEncoder.encode(e.getMessage(), java.nio.charset.StandardCharsets.UTF_8)))
+                    .build();
         }
     }
 

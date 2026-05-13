@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -39,7 +40,7 @@ public class ServiceNowClient {
         try {
             return webClient.get()
                     .uri(uriBuilder -> uriBuilder
-                            .path("/api/now/table/sys_user")
+                                .path("/api/now/v1/table/sys_user")
                             .queryParam("sysparm_limit", "1")
                             .queryParam("sysparm_fields", "sys_id,user_name,first_name,last_name,email")
                             .build())
@@ -72,7 +73,7 @@ public class ServiceNowClient {
         try {
             return webClient.get()
                     .uri(uriBuilder -> uriBuilder
-                            .path("/api/now/table/incident/" + sysId)
+                            .path("/api/now/v1/table/incident/" + sysId)
                             .queryParam("sysparm_fields",
                                        "sys_id,number,short_description,description,state,priority," +
                                        "caller_id,assigned_to,category,urgency,impact," +
@@ -170,7 +171,7 @@ public class ServiceNowClient {
             var uriSpec = webClient.get()
                     .uri(uriBuilder -> {
                         var builder = uriBuilder
-                                .path("/api/now/table/incident")
+                                .path("/api/now/v1/table/incident")
                                 .queryParam("sysparm_fields", 
                                            "sys_id,number,short_description,state,priority," +
                                            "assigned_to.user_name,category,sys_created_on,sys_updated_on," +
@@ -389,9 +390,15 @@ public class ServiceNowClient {
      */
     private Mono<Throwable> handleClientError(org.springframework.web.reactive.function.client.ClientResponse response, String operation) {
         return response.bodyToMono(String.class)
+                .defaultIfEmpty("")
                 .map(errorBody -> {
-                    logger.error("Client error during {}: {} - {}", operation, response.statusCode(), errorBody);
-                    return new RuntimeException("Client error during " + operation + ": " + errorBody);
+                    HttpStatus status = HttpStatus.resolve(response.statusCode().value());
+                    if (status == null) {
+                        status = HttpStatus.BAD_GATEWAY;
+                    }
+
+                    logger.error("Client error during {}: {} - {}", operation, status, errorBody);
+                    return new ServiceNowApiException(status, operation, errorBody);
                 });
     }
 
@@ -400,9 +407,15 @@ public class ServiceNowClient {
      */
     private Mono<Throwable> handleServerError(org.springframework.web.reactive.function.client.ClientResponse response, String operation) {
         return response.bodyToMono(String.class)
+                .defaultIfEmpty("")
                 .map(errorBody -> {
-                    logger.error("Server error during {}: {} - {}", operation, response.statusCode(), errorBody);
-                    return new RuntimeException("ServiceNow server error during " + operation + ": " + errorBody);
+                    HttpStatus status = HttpStatus.resolve(response.statusCode().value());
+                    if (status == null) {
+                        status = HttpStatus.BAD_GATEWAY;
+                    }
+
+                    logger.error("Server error during {}: {} - {}", operation, status, errorBody);
+                    return new ServiceNowApiException(status, operation, errorBody);
                 });
     }
 

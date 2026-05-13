@@ -23,16 +23,16 @@ async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = typeof window !== 'undefined' 
-    ? localStorage.getItem('access_token') 
+  const userId = typeof window !== 'undefined'
+    ? localStorage.getItem('user_id')
     : null;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  if (userId) {
+    headers['X-User-Id'] = userId;
   }
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
