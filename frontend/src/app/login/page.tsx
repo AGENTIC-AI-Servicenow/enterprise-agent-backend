@@ -16,11 +16,8 @@ function LoginContent() {
   const router = useRouter();
   const { isAuthenticated, isLoading, initiateOAuth } = useAuth();
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      router.push("/dashboard");
-    }
-  }, [isAuthenticated, router]);
+  // Removed automatic redirect to allow manual re-authentication.
+  // If the user is already authenticated, they can still click the dashboard manually.
 
   if (isLoading) {
     return (
