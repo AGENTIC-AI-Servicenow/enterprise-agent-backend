@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Badge } from "@/components/ui";
 import { useIncidents } from "@/hooks/use-incidents";
@@ -51,6 +52,8 @@ export default function DashboardPage() {
   ];
 
   const recentIncidents = incidents?.slice(0, 5) || [];
+
+  const [showDebug, setShowDebug] = useState(false);
 
   const getPriorityBadge = (priority: string) => {
     const badges = {
@@ -143,10 +146,28 @@ export default function DashboardPage() {
                       </p>
                     </div>
                     <div className="text-right text-sm text-muted-foreground">
-                      <div>{new Date(incident.opened_at).toLocaleDateString()}</div>
-                      <div className="text-xs">
-                        {new Date(incident.opened_at).toLocaleTimeString()}
-                      </div>
+                      {incident.opened_at ? (
+                        (() => {
+                          const safeDate = new Date(
+                            incident.opened_at.includes("Z")
+                              ? incident.opened_at
+                              : incident.opened_at + "Z"
+                          );
+                          if (isNaN(safeDate.getTime())) {
+                            return <div>—</div>;
+                          }
+                          return (
+                            <>
+                              <div>{safeDate.toLocaleDateString()}</div>
+                              <div className="text-xs">
+                                {safeDate.toLocaleTimeString()}
+                              </div>
+                            </>
+                          );
+                        })()
+                      ) : (
+                        <div>—</div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -154,6 +175,36 @@ export default function DashboardPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* DEBUG MODAL BUTTON */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowDebug(true)}
+            className="rounded border px-4 py-2 text-sm hover:bg-accent"
+          >
+            Ver JSON completo
+          </button>
+        </div>
+
+        {/* DEBUG MODAL */}
+        {showDebug && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="max-h-[80vh] w-[90vw] overflow-auto rounded bg-white p-6 shadow-xl">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold">JSON Response /api/incidents</h2>
+                <button
+                  onClick={() => setShowDebug(false)}
+                  className="rounded border px-3 py-1 text-sm hover:bg-accent"
+                >
+                  Cerrar
+                </button>
+              </div>
+              <pre className="text-xs whitespace-pre-wrap break-all">
+                {JSON.stringify(incidents, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
 
         {/* AI Assistant Quick Actions */}
         <Card>

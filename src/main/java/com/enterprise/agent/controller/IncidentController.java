@@ -69,20 +69,25 @@ public class IncidentController {
                 state, priority, assigned_to, 10000, 0
             );
 
-            // Extract result array
-            JsonNode incidents = serviceNowResponse.get("result");
-            int total = incidents != null ? incidents.size() : 0;
+            JsonNode incidentsNode = serviceNowResponse.get("result");
+            ArrayNode normalized = objectMapper.createArrayNode();
 
-            // Build ApiResponse-compatible wrapper { success, data, total, limit, offset }
+            if (incidentsNode != null && incidentsNode.isArray()) {
+                for (JsonNode inc : incidentsNode) {
+                    normalized.add(normalizeIncident(inc));
+                }
+            }
+
+            int total = normalized.size();
+
             ObjectNode response = objectMapper.createObjectNode();
             response.put("success", true);
-            response.set("data", incidents);
+            response.set("data", normalized);
             response.put("total", total);
-            response.put("limit", limit);
-            response.put("offset", offset);
+            response.put("limit", total);
+            response.put("offset", 0);
             response.put("mock_data", false);
 
-            logger.info("Retrieved {} incidents from ServiceNow", total);
             return ResponseEntity.ok(response);
 
         } catch (ServiceNowApiException e) {
@@ -290,6 +295,67 @@ public class IncidentController {
             error.put("message", e.getMessage());
             return ResponseEntity.internalServerError().body(error);
         }
+    }
+
+    private ObjectNode normalizeIncident(JsonNode inc) {
+
+        ObjectNode n = objectMapper.createObjectNode();
+
+        n.put("sys_id", inc.path("sys_id").asText());
+        n.put("number", inc.path("number").asText());
+        n.put("short_description", inc.path("short_description").asText(""));
+        n.put("description", inc.path("description").asText(""));
+
+        // STATE mapping
+        String stateRaw = inc.path("state").asText("");
+        String state = switch (stateRaw) {
+            case "1" -> "New";
+            case "2" -> "In Progress";
+            case "3" -> "On Hold";
+            case "6" -> "Resolved";
+            case "7" -> "Closed";
+            default -> stateRaw;
+        };
+        n.put("state", state);
+
+        // PRIORITY mapping
+        String priorityRaw = inc.path("priority").asText("");
+        String priority = switch (priorityRaw) {
+            case "1" -> "Critical";
+            case "2" -> "High";
+            case "3" -> "Medium";
+            case "4", "5" -> "Low";
+            default -> priorityRaw;
+        };
+        n.put("priority", priority);
+
+        n.put("impact", inc.path("impact").asText(""));
+        n.put("urgency", inc.path("urgency").asText(""));
+
+        n.put("assigned_to",
+                inc.path("assigned_to").isObject()
+                        ? inc.path("assigned_to").path("display_value").asText("")
+                        : inc.path("assigned_to").asText(""));
+
+        n.put("caller_id",
+                inc.path("caller_id").isObject()
+                        ? inc.path("caller_id").path("display_value").asText("")
+                        : inc.path("caller_id").asText(""));
+
+        // DATE normalization using sys_created_on (actual Opened field in ServiceNow)
+        String opened = inc.path("sys_created_on").asText("");
+
+        if (!opened.isBlank()) {
+            String iso = opened.replace(" ", "T");
+            if (!iso.endsWith("Z")) {
+                iso = iso + "Z";
+            }
+            n.put("opened_at", iso);
+        } else {
+            n.put("opened_at", "");
+        }
+
+        return n;
     }
 
     // Legacy endpoint - kept for backward compatibility
