@@ -11,16 +11,44 @@ export default function IncidentsPage() {
   const { incidents, isLoading, refetch } = useIncidents();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterState, setFilterState] = useState<string>("all");
+  const [filterPriority, setFilterPriority] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<string>("date_desc");
 
-  const filteredIncidents = incidents?.filter((incident: Incident) => {
-    const matchesSearch = 
-      incident.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      incident.short_description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesFilter = filterState === "all" || incident.state === filterState;
-    
-    return matchesSearch && matchesFilter;
-  });
+  const filteredIncidents = incidents
+    ?.filter((incident: Incident) => {
+      const matchesSearch =
+        incident.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        incident.short_description.toLowerCase().includes(searchQuery.toLowerCase());
+
+      const matchesState =
+        filterState === "all" || incident.state === filterState;
+
+      const matchesPriority =
+        filterPriority === "all" || incident.priority === filterPriority;
+
+      return matchesSearch && matchesState && matchesPriority;
+    })
+    ?.sort((a, b) => {
+      const dateA = new Date(a.opened_at).getTime();
+      const dateB = new Date(b.opened_at).getTime();
+
+      switch (sortBy) {
+        case "date_asc":
+          return dateA - dateB;
+        case "date_desc":
+          return dateB - dateA;
+        case "priority":
+          const priorityOrder = { Critical: 1, High: 2, Medium: 3, Low: 4 };
+          return (
+            (priorityOrder[a.priority as keyof typeof priorityOrder] || 5) -
+            (priorityOrder[b.priority as keyof typeof priorityOrder] || 5)
+          );
+        case "number":
+          return a.number.localeCompare(b.number);
+        default:
+          return 0;
+      }
+    });
 
   const getPriorityBadge = (priority: string) => {
     const badges = {
@@ -68,7 +96,7 @@ export default function IncidentsPage() {
               {/* Filters */}
               <div className="flex items-center gap-2">
                 <select
-                  className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-10 rounded-md border px-3 text-sm"
                   value={filterState}
                   onChange={(e) => setFilterState(e.target.value)}
                 >
@@ -78,6 +106,29 @@ export default function IncidentsPage() {
                   <option value="On Hold">On Hold</option>
                   <option value="Resolved">Resolved</option>
                   <option value="Closed">Closed</option>
+                </select>
+
+                <select
+                  className="h-10 rounded-md border px-3 text-sm"
+                  value={filterPriority}
+                  onChange={(e) => setFilterPriority(e.target.value)}
+                >
+                  <option value="all">All Priorities</option>
+                  <option value="Critical">Critical</option>
+                  <option value="High">High</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Low">Low</option>
+                </select>
+
+                <select
+                  className="h-10 rounded-md border px-3 text-sm"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                >
+                  <option value="date_desc">Newest First</option>
+                  <option value="date_asc">Oldest First</option>
+                  <option value="priority">Priority</option>
+                  <option value="number">Number</option>
                 </select>
 
                 <Button
