@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ✅ Fix: remove default browser margin causing white gap */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#__next {
+  height: 100%;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

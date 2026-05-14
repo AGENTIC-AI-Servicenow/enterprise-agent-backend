@@ -5,10 +5,12 @@ import { Card, CardContent, Badge, Button, Input } from "@/components/ui";
 import { useIncidents } from "@/hooks/use-incidents";
 import { Incident } from "@/types";
 import { Search, Filter, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useIncident } from "@/hooks/use-incidents";
 
 export default function IncidentsPage() {
   const { incidents, isLoading, refetch } = useIncidents();
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterState, setFilterState] = useState<string>("all");
   const [filterPriority, setFilterPriority] = useState<string>("all");
@@ -160,6 +162,7 @@ export default function IncidentsPage() {
                 {filteredIncidents?.map((incident: Incident) => (
                   <div
                     key={incident.sys_id}
+                    onClick={() => setSelectedIncidentId(incident.sys_id)}
                     className="p-6 transition-colors hover:bg-muted/50 cursor-pointer"
                   >
                     <div className="flex items-start justify-between gap-4">
@@ -186,7 +189,12 @@ export default function IncidentsPage() {
                           </div>
                           <div>
                             <span className="font-medium">Assigned to:</span>{" "}
-                            {incident.assigned_to || "Unassigned"}
+                            {(() => {
+                              const ia: any = incident;
+                              return typeof ia.assigned_to === "object"
+                                ? ia.assigned_to?.value
+                                : ia.assigned_to || "Unassigned";
+                            })()}
                           </div>
                           <div>
                             <span className="font-medium">Impact:</span>{" "}
@@ -216,6 +224,14 @@ export default function IncidentsPage() {
           </CardContent>
         </Card>
 
+        {/* INCIDENT DETAIL MODAL */}
+        {selectedIncidentId && (
+          <IncidentDetailModal
+            incidentId={selectedIncidentId}
+            onClose={() => setSelectedIncidentId(null)}
+          />
+        )}
+
         {/* Pagination */}
         {filteredIncidents && filteredIncidents.length > 0 && (
           <div className="flex items-center justify-between">
@@ -226,5 +242,238 @@ export default function IncidentsPage() {
         )}
       </div>
     </MainLayout>
+  );
+}
+
+/* ===============================
+   INCIDENT DETAIL MODAL COMPONENT
+================================= */
+
+function IncidentDetailModal({
+  incidentId,
+  onClose,
+}: {
+  incidentId: string;
+  onClose: () => void;
+}) {
+  const { data: incident, isLoading } = useIncident(incidentId);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // 🔒 Lock background scroll while modal is open
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "auto";
+    };
+  }, []);
+
+  const stateMap: any = {
+    "1": "New",
+    "2": "In Progress",
+    "3": "On Hold",
+    "6": "Resolved",
+    "7": "Closed",
+  };
+
+  const priorityMap: any = {
+    "1": "Critical",
+    "2": "High",
+    "3": "Medium",
+    "4": "Low",
+    "5": "Low",
+  };
+
+  const getStateLabel = (s: string) => stateMap[s] || s;
+  const getPriorityLabel = (p: string) => priorityMap[p] || p;
+
+  return (
+    <div className="fixed top-0 left-0 w-screen h-screen z-[9999] bg-black/50 flex items-center justify-center !mt-0 !mb-0">
+      <div className="w-full max-w-[1000px] max-h-[95vh] rounded-2xl bg-white shadow-2xl border flex flex-col overflow-hidden">
+        <div className="flex justify-between items-start px-8 pt-8 pb-6 border-b bg-white">
+          <div>
+            <div className="text-2xl font-bold tracking-tight">
+              {incident?.number}
+            </div>
+            <div className="flex gap-2 mt-3">
+              {incident && (
+                <>
+                  <Badge>{getStateLabel((incident as any).state)}</Badge>
+                  <Badge variant="secondary">
+                    {getPriorityLabel((incident as any).priority)}
+                  </Badge>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <Button
+              variant={isEditing ? "destructive" : "default"}
+              size="sm"
+              onClick={() => setIsEditing(!isEditing)}
+            >
+              {isEditing ? "Cancel Editing" : "Edit Incident"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+
+        {isLoading || !incident ? (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            Loading incident details...
+          </div>
+        ) : (() => {
+            const inc: any = incident;
+            return (
+            <div className="flex-1 overflow-y-auto px-8 py-8 space-y-10">
+
+              {/* HEADER SUMMARY */}
+              <div className="flex items-center justify-between border-b pb-4">
+                <div>
+                  <h3 className="text-lg font-semibold">{incident.short_description}</h3>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    {incident.category || "Uncategorized"}
+                  </div>
+                </div>
+                <div className="text-right text-sm text-muted-foreground">
+                  <div>
+                    {incident.opened_at
+                      ? new Date(incident.opened_at).toLocaleString()
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {/* DETAILS GRID */}
+              <div className="grid grid-cols-2 gap-10 text-sm">
+
+                <div>
+                  <div className="font-medium text-muted-foreground">State</div>
+                  {isEditing ? (
+                    <select className="border rounded px-2 py-1">
+                      <option value="1">New</option>
+                      <option value="2">In Progress</option>
+                      <option value="3">On Hold</option>
+                      <option value="6">Resolved</option>
+                      <option value="7">Closed</option>
+                    </select>
+                  ) : (
+                    <div>{getStateLabel(inc.state)}</div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Priority</div>
+                  {isEditing ? (
+                    <select className="border rounded px-2 py-1">
+                      <option value="1">Critical</option>
+                      <option value="2">High</option>
+                      <option value="3">Medium</option>
+                      <option value="4">Low</option>
+                      <option value="5">Low</option>
+                    </select>
+                  ) : (
+                    <div>{getPriorityLabel(inc.priority)}</div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Impact</div>
+                  <div>{incident.impact}</div>
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Urgency</div>
+                  <div>{incident.urgency}</div>
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Assigned To</div>
+                  <div>
+                    {typeof inc.assigned_to === "object"
+                      ? inc.assigned_to?.value
+                      : inc.assigned_to || "Unassigned"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Caller Sys ID</div>
+                  <div className="break-all text-xs">
+                    {typeof inc.caller_id === "object"
+                      ? inc.caller_id?.value
+                      : inc.caller_id}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Created On</div>
+                  <div>
+                    {inc.sys_created_on
+                      ? new Date(inc.sys_created_on).toLocaleString()
+                      : "—"}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-medium text-muted-foreground">Updated On</div>
+                  <div>
+                    {inc.sys_updated_on
+                      ? new Date(inc.sys_updated_on).toLocaleString()
+                      : "—"}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* DESCRIPTION */}
+              <div className="bg-slate-50 border rounded-xl p-6">
+                <div className="font-semibold text-base mb-3">Description</div>
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {incident.description || "No description provided"}
+                </div>
+              </div>
+
+              {/* TIMELINE */}
+              <div className="bg-slate-50 border rounded-xl p-6">
+                <div className="font-semibold text-base mb-6">Activity Timeline</div>
+                <div className="relative border-l pl-6 space-y-6">
+                  <div>
+                    <div className="absolute -left-[9px] w-4 h-4 bg-blue-500 rounded-full"></div>
+                    <div className="font-medium">Incident Created</div>
+                    <div className="text-sm text-muted-foreground">
+                      {inc.sys_created_on}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="absolute -left-[9px] w-4 h-4 bg-amber-500 rounded-full"></div>
+                    <div className="font-medium">Last Updated</div>
+                    <div className="text-sm text-muted-foreground">
+                      {inc.sys_updated_on}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RAW JSON (collapsible style visual improvement) */}
+              <details className="border rounded-xl p-4 bg-slate-50">
+                <summary className="cursor-pointer font-medium text-sm">
+                  Technical JSON Payload
+                </summary>
+                <pre className="text-xs whitespace-pre-wrap break-all mt-4 max-h-[250px] overflow-auto">
+                  {JSON.stringify(incident, null, 2)}
+                </pre>
+              </details>
+
+            </div>
+            );
+        })()}
+      </div>
+    </div>
   );
 }

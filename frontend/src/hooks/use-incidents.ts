@@ -87,12 +87,19 @@ export function useIncidents(options: UseIncidentsOptions = {}) {
 export function useIncident(id: string | null) {
   return useQuery<Incident>({
     queryKey: ['incidents', id],
-    queryFn: async () => {
-      const response = await incidentsApi.getById(id!);
-      if (!response.data) {
-        throw new Error('Incident not found');
+    queryFn: async (): Promise<Incident> => {
+      const response: any = await incidentsApi.getById(id!);
+
+      // If backend returns wrapped ApiResponse
+      if (response?.success !== undefined) {
+        if (!response.data) {
+          throw new Error("Incident not found");
+        }
+        return response.data as Incident;
       }
-      return response.data;
+
+      // If backend returns raw incident object
+      return response as Incident;
     },
     enabled: !!id,
     staleTime: 60000,
