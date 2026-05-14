@@ -64,9 +64,9 @@ public class IncidentController {
                     state, priority, limit, offset);
         
         try {
-            // Get real incidents from ServiceNow
+            // Fetch ALL incidents (override default limit of 50)
             JsonNode serviceNowResponse = serviceNowClient.getAllIncidents(
-                state, priority, assigned_to, limit, offset
+                state, priority, assigned_to, 10000, 0
             );
 
             // Extract result array
