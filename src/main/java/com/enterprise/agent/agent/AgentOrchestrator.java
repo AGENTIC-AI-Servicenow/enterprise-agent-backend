@@ -1,293 +1,261 @@
 package com.enterprise.agent.agent;
 
+import com.enterprise.agent.client.ServiceNowClient;
 import com.enterprise.agent.context.UserContext;
 import com.enterprise.agent.memory.ConversationMemory;
+import com.enterprise.agent.service.IncidentPolicyService;
+import com.enterprise.agent.service.IncidentRendererService;
 import com.enterprise.agent.service.LLMService;
 import lombok.Data;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * AgentOrchestrator: Cerebro del sistema agéntico
- * 
- * FLUJO PRINCIPAL:
- * 1. Usuario envía mensaje → AgentController
- * 2. AgentOrchestrator recibe request con UserContext
- * 3. IntentClassifier analiza la intención con LLM
- * 4. ActionRouter ejecuta la acción apropiada
- * 5. ConversationMemory guarda el contexto
- * 6. Respuesta se envía al usuario
- * 
- * ARQUITECTURA:
- * ┌──────────────────────────────────────────┐
- * │         AgentOrchestrator                │
- * │  (Coordinador central - Stateless)       │
- * └──────────────────────────────────────────┘
- *           │              │            │
- *           ▼              ▼            ▼
- *    IntentClassifier  ActionRouter  ConversationMemory
- *           │              │            │
- *           ▼              ▼            ▼
- *       LLMService   ServiceNowClient  SessionStore
- * 
- * BENEFICIOS vs enfoque anterior (AgentService):
- * - Separación clara de responsabilidades
- * - Fácil testing (cada componente se prueba independiente)
- * - Escalable: agregar nuevas intenciones solo requiere actualizar ActionRouter
- * - Observabilidad: logs centralizados con tiempos de ejecución
- * - Multitenancy: cada request trae su UserContext
- * 
- * FASE 1: Copiloto para analistas
- * FASE 2: Agentes autónomos con planificación y herramientas
+ * AgentOrchestrator - Copiloto Enterprise AI
+ *
+ * Arquitectura:
+ * 1. ConversationMemory
+ * 2. AgentDecisionEngine (LLM Planner)
+ * 3. Tool Execution (determinístico)
+ * 4. Policy Layer
+ * 5. Reasoning opcional
+ * 6. Renderer
  */
 @Service
 @Log4j2
 public class AgentOrchestrator {
 
-    private final IntentClassifier intentClassifier;
-    private final ActionRouter actionRouter;
     private final ConversationMemory conversationMemory;
     private final LLMService llmService;
+    private final IncidentPolicyService incidentPolicyService;
+    private final IncidentRendererService incidentRendererService;
+    private final ServiceNowClient serviceNowClient;
+    private final AgentDecisionEngine decisionEngine;
+    private final com.enterprise.agent.service.OperationalRiskService riskService;
 
-    /**
-     * Request de entrada del usuario
-     */
     @Data
     public static class AgentRequest {
         private String message;
-        private String sessionId; // Para mantener contexto conversacional
-        private UserContext userContext; // Información del usuario autenticado
-        private Map<String, Object> metadata; // Datos adicionales (ej: canal, timestamp)
+        private String sessionId;
+        private UserContext userContext;
+        private Map<String, Object> metadata;
     }
 
-    /**
-     * Response al usuario
-     */
     @Data
     public static class AgentResponse {
-        private String message;
-        private String intent;
-        private boolean success;
-        private Map<String, Object> metadata;
-        private long executionTimeMs;
-        
-        public AgentResponse(String message, String intent, boolean success, Map<String, Object> metadata, long executionTimeMs) {
-            this.message = message;
-            this.intent = intent;
-            this.success = success;
-            this.metadata = metadata != null ? metadata : new HashMap<>();
-            this.executionTimeMs = executionTimeMs;
-        }
+        private final String message;
+        private final String intent;
+        private final boolean success;
+        private final Map<String, Object> metadata;
+        private final long executionTimeMs;
+        private final Map<String, Object> execution;
     }
 
     public AgentOrchestrator(
-            IntentClassifier intentClassifier,
-            ActionRouter actionRouter,
             ConversationMemory conversationMemory,
-            LLMService llmService) {
-        this.intentClassifier = intentClassifier;
-        this.actionRouter = actionRouter;
+            LLMService llmService,
+            IncidentPolicyService incidentPolicyService,
+            IncidentRendererService incidentRendererService,
+            ServiceNowClient serviceNowClient,
+            AgentDecisionEngine decisionEngine,
+            com.enterprise.agent.service.OperationalRiskService riskService) {
+
         this.conversationMemory = conversationMemory;
         this.llmService = llmService;
+        this.incidentPolicyService = incidentPolicyService;
+        this.incidentRendererService = incidentRendererService;
+        this.serviceNowClient = serviceNowClient;
+        this.decisionEngine = decisionEngine;
+        this.riskService = riskService;
     }
 
-    /**
-     * Método principal: procesar request del usuario
-     * 
-     * @param request mensaje del usuario con contexto
-     * @return respuesta del agente
-     */
     public AgentResponse process(AgentRequest request) {
-        
+
         long startTime = System.currentTimeMillis();
-        
-        // Generar sessionId si no existe
-        String sessionId = request.getSessionId() != null 
-            ? request.getSessionId() 
-            : UUID.randomUUID().toString();
-        
+        String sessionId = request.getSessionId() != null
+                ? request.getSessionId()
+                : UUID.randomUUID().toString();
+
         try {
-            log.info("Processing request: user={}, session={}, message={}", 
-                request.getUserContext().getUserId(), 
-                sessionId, 
-                truncate(request.getMessage(), 50));
-            
-            // 1. Guardar mensaje del usuario en memoria
+
+            String message = request.getMessage() == null ? "" : request.getMessage();
+
             conversationMemory.addUserMessage(
-                sessionId, 
-                request.getMessage(), 
-                Map.of("user_id", request.getUserContext().getUserId())
+                    sessionId,
+                    message,
+                    Map.of("user_id", request.getUserContext().getUserId())
             );
-            
-            // 2. Clasificar intención con LLM
-            IntentClassifier.IntentResult intentResult = intentClassifier.classify(
-                request.getMessage(),
-                request.getUserContext(),
-                sessionId
+
+            // ==============================
+            // 🤖 1. AI Planner
+            // ==============================
+            AgentDecisionEngine.AgentPlan plan =
+                    decisionEngine.analyze(sessionId, message);
+
+            String incidentNumber = plan.getIncidentNumber();
+
+            // Recuperar del contexto si no viene explícito
+            if (incidentNumber == null) {
+                incidentNumber = conversationMemory.getLastIncidentId(sessionId);
+            }
+
+            if (incidentNumber == null) {
+                return buildResponse(
+                        "No se pudo identificar el incidente en la solicitud.",
+                        "UNKNOWN",
+                        false,
+                        sessionId,
+                        startTime
+                );
+            }
+
+            // ==============================
+            // 🛠 2. Tool Execution
+            // ==============================
+            var result = serviceNowClient.getIncidentByNumber(incidentNumber);
+
+            if (!result.has("result")
+                    || !result.get("result").isArray()
+                    || result.get("result").size() == 0) {
+
+                conversationMemory.addFailed(incidentNumber);
+
+                return buildResponse(
+                        "No se encontró el incidente " + incidentNumber + ". Verifica el número o tus permisos de acceso.",
+                        "NOT_FOUND",
+                        false,
+                        sessionId,
+                        startTime
+                );
+            }
+
+            var incidentNode = result.get("result").get(0);
+
+            // 🔎 DEBUG: Log JSON completo devuelto por ServiceNow
+            log.info("Incident raw JSON from ServiceNow:\n{}",
+                    incidentNode.toPrettyString());
+
+            var safe = incidentPolicyService.applyPolicy(
+                    incidentNode,
+                    request.getUserContext()
             );
-            
-            log.info("Intent classified: intent={}, confidence={}, session={}", 
-                intentResult.intent(), 
-                intentResult.confidence(), 
-                sessionId);
-            
-            // 3. Ejecutar acción según intención
-            ActionRouter.ActionResult actionResult = actionRouter.execute(
-                intentResult,
-                request.getUserContext(),
-                sessionId
-            );
-            
-            // 4. Generar respuesta final
-            String finalResponse = generateResponse(intentResult, actionResult);
-            
-            // 5. Guardar respuesta en memoria
+
+            conversationMemory.addSuccessful(incidentNumber);
+
+            // ==============================
+            // 🧠 3. Execution Based on Plan
+            // ==============================
+
+            String rendered;
+
+            // Evaluar riesgo operativo
+            var risk = riskService.evaluate(safe);
+
+            switch (plan.getIntent()) {
+
+                case "QUERY_FIELD":
+                    rendered = incidentRendererService.renderField(
+                            safe,
+                            plan.getFieldRequested()
+                    );
+                    break;
+
+                case "SUMMARY":
+                    if ("executive".equals(plan.getSummaryType())) {
+                        rendered = incidentRendererService.renderExecutiveSummary(safe);
+                    } else {
+                        rendered = incidentRendererService.renderShortSummary(safe);
+                    }
+                    break;
+
+                case "RECOMMENDATION":
+                    rendered = llmService.generate("""
+Analiza el incidente y genera una recomendación profesional breve.
+
+Evalúa:
+- Prioridad
+- Estado
+- Asignación
+- Riesgo operativo
+
+Datos:
+%s
+""".formatted(safe.toPrettyString()), 0.2, 150);
+                    break;
+
+                case "GET_INCIDENT":
+                default:
+                    rendered = incidentRendererService.renderStructuredView(safe)
+                            + "\n\nRisk Score: " + risk.score
+                            + "\nRisk Level: " + risk.level;
+                    break;
+            }
+
             conversationMemory.addAssistantMessage(
-                sessionId,
-                finalResponse,
-                Map.of(
-                    "intent", intentResult.intent().name(),
-                    "success", actionResult.isSuccess()
-                )
+                    sessionId,
+                    rendered,
+                    Map.of("intent", plan.getIntent(),
+                           "incident_id", incidentNumber)
             );
-            
-            long executionTime = System.currentTimeMillis() - startTime;
-            
-            log.info("Request processed successfully: session={}, intent={}, time={}ms", 
-                sessionId, 
-                intentResult.intent(), 
-                executionTime);
-            
-            // 6. Retornar response
-            return new AgentResponse(
-                finalResponse,
-                intentResult.intent().name(),
-                actionResult.isSuccess(),
+
+            return buildResponse(
+                    rendered,
+                    plan.getIntent(),
+                    true,
+                    sessionId,
+                    startTime
+            );
+
+        } catch (com.enterprise.agent.client.ServiceNowApiException e) {
+
+            log.warn("ServiceNow API error: {}", e.getMessage());
+
+            return buildResponse(
+                    "No se encontró el incidente solicitado o no tienes permisos para visualizarlo.",
+                    "NOT_FOUND",
+                    false,
+                    sessionId,
+                    startTime
+            );
+
+        } catch (Exception e) {
+
+            log.error("Error inesperado procesando solicitud", e);
+
+            return buildResponse(
+                    "No se pudo completar la solicitud en este momento. Intenta nuevamente.",
+                    "ERROR",
+                    false,
+                    sessionId,
+                    startTime
+            );
+        }
+    }
+
+    private AgentResponse buildResponse(
+            String message,
+            String intent,
+            boolean success,
+            String sessionId,
+            long startTime) {
+
+        long totalTime = System.currentTimeMillis() - startTime;
+
+        return new AgentResponse(
+                message,
+                intent,
+                success,
                 Map.of(
-                    "session_id", sessionId,
-                    "confidence", intentResult.confidence(),
-                    "action_result", actionResult.getData()
+                        "session_id", sessionId
                 ),
-                executionTime
-            );
-            
-        } catch (SecurityException e) {
-            // Usuario no autorizado
-            log.warn("Security exception: user={}, session={}, error={}", 
-                request.getUserContext().getUserId(), 
-                sessionId, 
-                e.getMessage());
-            
-            return new AgentResponse(
-                "No tienes permisos para realizar esta acción.",
-                "SECURITY_ERROR",
-                false,
-                Map.of("error", e.getMessage()),
-                System.currentTimeMillis() - startTime
-            );
-            
-        } catch (Exception e) {
-            // Error general
-            log.error("Error processing request: user={}, session={}, error={}", 
-                request.getUserContext().getUserId(), 
-                sessionId, 
-                e.getMessage(), 
-                e);
-            
-            // Fallback: respuesta conversacional
-            String fallbackResponse = generateFallbackResponse(request.getMessage());
-            
-            return new AgentResponse(
-                fallbackResponse,
-                "ERROR",
-                false,
-                Map.of("error", e.getMessage()),
-                System.currentTimeMillis() - startTime
-            );
-        }
-    }
-
-    /**
-     * Generar respuesta final para el usuario
-     * Combina el resultado de la acción con lenguaje natural
-     */
-    private String generateResponse(
-            IntentClassifier.IntentResult intentResult, 
-            ActionRouter.ActionResult actionResult) {
-        
-        // Si la acción ya incluye un mensaje formateado, usarlo
-        if (actionResult.getMessage() != null && !actionResult.getMessage().isEmpty()) {
-            return actionResult.getMessage();
-        }
-        
-        // Si no hay mensaje, generar uno según la intención
-        return switch (intentResult.intent()) {
-            case GET_INCIDENT -> actionResult.isSuccess()
-                ? "He encontrado el ticket solicitado."
-                : "No pude obtener información del ticket.";
-                
-            case SEARCH_INCIDENTS -> actionResult.isSuccess()
-                ? "He encontrado tus tickets."
-                : "No pude buscar los tickets.";
-                
-            case CREATE_INCIDENT -> actionResult.isSuccess()
-                ? "Ticket creado exitosamente."
-                : "No pude crear el ticket.";
-                
-            case ANALYZE_INCIDENT -> actionResult.isSuccess()
-                ? "Aquí está el análisis del ticket."
-                : "No pude analizar el ticket.";
-                
-            case CHAT -> actionResult.getMessage();
-        };
-    }
-
-    /**
-     * Generar respuesta de fallback usando LLM
-     * Se usa cuando hay un error inesperado
-     */
-    private String generateFallbackResponse(String userMessage) {
-        try {
-            String prompt = """
-Eres un asistente corporativo. El usuario preguntó algo pero hubo un error técnico.
-
-Responde de forma empática y profesional:
-- Discúlpate brevemente
-- No menciones detalles técnicos
-- Ofrece intentar de nuevo
-- Mantén un tono profesional pero cercano
-
-Usuario: %s
-""".formatted(userMessage);
-            
-            return llmService.generate(prompt, 0.7, 100);
-            
-        } catch (Exception e) {
-            // Si el LLM también falla, respuesta estática
-            log.error("Fallback LLM failed: {}", e.getMessage());
-            return "Disculpa, tuve un problema procesando tu solicitud. ¿Podrías intentar de nuevo?";
-        }
-    }
-
-    /**
-     * Utilidad: truncar strings largos para logs
-     */
-    private String truncate(String text, int maxLength) {
-        if (text == null) return "";
-        return text.length() > maxLength 
-            ? text.substring(0, maxLength) + "..." 
-            : text;
-    }
-
-    /**
-     * Método para limpiar sesiones expiradas
-     * TODO: En producción, ejecutar con @Scheduled
-     */
-    public void cleanupExpiredSessions() {
-        conversationMemory.cleanExpiredSessions();
+                totalTime,
+                Map.of(
+                        "mode", "enterprise_ai",
+                        "confidence", intent
+                )
+        );
     }
 }

@@ -111,7 +111,8 @@ public class ServiceNowClient {
                             .path("/api/now/v1/table/incident")
                             .queryParam("sysparm_query", "number=" + number)
                             .queryParam("sysparm_fields", 
-                                       "number,short_description,state,priority,caller_id,assigned_to,sys_created_on")
+                                       "number,short_description,state,priority,caller_id,assigned_to,opened_at,sys_created_on")
+                            .queryParam("sysparm_display_value", "true")
                             .queryParam("sysparm_limit", "1")
                             .build())
                     .retrieve()

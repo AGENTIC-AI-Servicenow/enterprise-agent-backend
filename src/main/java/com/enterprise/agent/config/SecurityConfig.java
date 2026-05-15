@@ -50,9 +50,9 @@ public class SecurityConfig {
             // CSRF: Disable for REST API (stateless)
             .csrf(csrf -> csrf.disable())
             
-            // Session Management: Stateless (no server-side sessions)
+            // Session Management: Allow session when required (needed for OAuth)
             .sessionManagement(session -> 
-                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
             )
             
             // Authorization Rules

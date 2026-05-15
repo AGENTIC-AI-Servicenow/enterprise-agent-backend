@@ -146,6 +146,34 @@ Usuario:
     }
 
     // =====================================================
+    // 4️⃣ AGENTIC CHAT (ReAct JSON)
+    // =====================================================
+    public String agentChat(String systemPrompt, String conversationContext) {
+
+        String fullPrompt = """
+%s
+
+Debes razonar paso a paso internamente.
+Responde ÚNICAMENTE en JSON válido con el siguiente formato:
+
+{
+  "thought": "razonamiento interno",
+  "action": "CHAT | GET_INCIDENT | CREATE_INCIDENT | FINISH",
+  "parameters": { }
+}
+
+Si necesitas ejecutar una acción técnica usa GET_INCIDENT o CREATE_INCIDENT.
+Si solo es conversación usa CHAT.
+Si ya tienes la respuesta final usa FINISH.
+
+Contexto:
+%s
+""".formatted(systemPrompt, conversationContext);
+
+        return generate(fullPrompt, 0.2, 400);
+    }
+
+    // =====================================================
     // MÉTODO CENTRALIZADO
     // =====================================================
     public String generate(String prompt, double temperature, int maxTokens) {

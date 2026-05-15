@@ -61,7 +61,8 @@ async function fetchApi<T>(
 
 export const agentApi = {
   async chat(request: AgentRequest): Promise<AgentResponse> {
-    return fetchApi<AgentResponse>('/api/agent/chat', {
+    // ✅ Using /test endpoint for local development (no auth required)
+    return fetchApi<AgentResponse>('/api/agent/test', {
       method: 'POST',
       body: JSON.stringify(request),
     });

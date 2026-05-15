@@ -118,21 +118,29 @@ public class ActionRouter {
             UserContext userContext) {
         
         String incidentNumber = (String) intentResult.parameters().get("number");
-        
+
+        // Normalizar número (trim + uppercase)
+        if (incidentNumber != null) {
+            incidentNumber = incidentNumber.trim().toUpperCase();
+        }
+
         // Si no hay número, intentar obtener el último del contexto
         if (incidentNumber == null || incidentNumber.isBlank()) {
             log.info("No incident number provided, searching for last incident");
             return handleSearchIncidents(userContext);
         }
-        
+
         log.info("Getting incident: number={}, user={}", incidentNumber, userContext.getUserId());
-        
+
         try {
-            JsonNode response = serviceNowClient.getIncidentSecureByNumberAndCaller(
-                incidentNumber, 
-                userContext.getUserId()
+            // Buscar por número normalizado
+            JsonNode response = serviceNowClient.getIncidentByNumber(
+                incidentNumber
             );
-            
+
+            // 🔎 DEBUG LOG - ver exactamente qué devuelve ServiceNow
+            log.info("Raw ServiceNow response for {}: {}", incidentNumber, response);
+
             if (response != null 
                 && response.has("result") 
                 && response.get("result").isArray()
@@ -140,30 +148,22 @@ public class ActionRouter {
                 
                 JsonNode incident = response.get("result").get(0);
                 
-                String shortDesc = incident.path("short_description").asText("Sin descripción");
-                String state = translateState(incident.path("state").asText());
-                String priority = incident.path("priority").asText("No definida");
-                
-                // Generar resumen con LLM
-                String contextData = String.format(
-                    "Número: %s\nDescripción: %s\nEstado: %s\nPrioridad: %s",
-                    incidentNumber, shortDesc, state, priority
-                );
-                
-                String summary = llmService.generateIncidentSummary(contextData);
+                // ✅ NO generar resumen aquí.
+                // Devolver datos crudos para que el LLM los use en el paso FINAL.
                 
                 Map<String, Object> data = new HashMap<>();
                 data.put("incident_number", incidentNumber);
-                data.put("short_description", shortDesc);
-                data.put("state", state);
-                data.put("priority", priority);
+                data.put("raw_incident", incident);
                 
-                return ActionResult.success(summary, data);
+                return ActionResult.success(
+                    incident.toString(), // Pasamos JSON real al contexto
+                    data
+                );
                 
             } else {
-                log.warn("Incident not found or no access: {}", incidentNumber);
+                log.warn("Incident NOT FOUND - Full response was: {}", response);
                 return ActionResult.failure(
-                    "No encontré el ticket " + incidentNumber + " o no tienes permisos para verlo."
+                    "DEBUG: No se encontró el ticket. Revisa logs backend."
                 );
             }
             

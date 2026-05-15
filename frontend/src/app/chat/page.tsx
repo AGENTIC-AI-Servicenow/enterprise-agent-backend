@@ -5,10 +5,21 @@ import { Card, CardContent, Button, Input } from "@/components/ui";
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Loader2 } from "lucide-react";
 
+interface ExecutionStep {
+  name: string;
+}
+
+interface ExecutionTrace {
+  mode: string;
+  steps: ExecutionStep[];
+  totalMs: number;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  execution?: ExecutionTrace;
 }
 
 export default function ChatPage() {
@@ -17,17 +28,20 @@ export default function ChatPage() {
       id: "1",
       role: "assistant",
       content:
-        "👋 Hola, soy tu AI Assistant. Puedes preguntarme sobre tus tickets, su estado o cualquier información relacionada.",
+        "Hola 👋\n\n" +
+        "Soy tu asistente de operaciones IT.\n\n" +
+        "Puedo ayudarte a revisar incidentes, su estado, prioridad o cualquier información registrada en el sistema.\n\n" +
+        "Cuéntame qué necesitas y lo vemos juntos.",
     },
   ]);
 
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
 
-  // ✅ Generate conversationId only on client to avoid hydration mismatch
   useEffect(() => {
     setConversationId(crypto.randomUUID());
   }, []);
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,14 +70,37 @@ export default function ChatPage() {
     setError(null);
 
     try {
-      // 🔜 Ready for future backend integration
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const response = await fetch("/api/agent/chat", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store", // ✅ Prevent Next.js RSC caching / proxy conflicts
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": localStorage.getItem("user_id") || ""
+        },
+        body: JSON.stringify({
+          message: input,
+          sessionId: conversationId,
+          user: {
+            sys_id: localStorage.getItem("user_id") || "frontend-session-user",
+            username: localStorage.getItem("username") || "frontend.user",
+            email: localStorage.getItem("email") || "frontend@local",
+            fullName: localStorage.getItem("fullName") || "Frontend User",
+            roles: ["user"]
+          }
+        }),
+      });
+
+      const data = await response.json();
+
+      // ✅ Artificial 3-second delay for all assistant messages
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const assistantReply: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content:
-          "🔎 (Arquitectura lista para Azure Foundry) Próximamente responderé usando el motor de AI conectado al backend.",
+        content: data.message || "Sin respuesta del backend",
+        execution: data.execution || undefined,
       };
 
       setMessages((prev) => [...prev, assistantReply]);
@@ -77,13 +114,13 @@ export default function ChatPage() {
 
   return (
     <MainLayout
-      title="AI Assistant"
-      subtitle="Consult and analyze your ServiceNow tickets using AI"
+      title="Enterprise Service Operations Assistant"
+      subtitle="Official IT Operations Interface • Deterministic & Policy-Controlled"
     >
-      <div className="h-[calc(100vh-140px)] flex flex-col">
-        <Card className="flex-1 flex flex-col overflow-hidden">
-          <CardContent className="flex-1 flex flex-col p-0">
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-muted/20">
+      <div className="h-[calc(100vh-140px)] flex flex-col max-w-4xl mx-auto w-full">
+        <Card className="flex flex-col border shadow-sm h-full">
+          <CardContent className="flex flex-col p-0 h-full">
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4 bg-muted/10">
               {messages.map((message) => (
                 <div
                   key={message.id}
@@ -93,24 +130,42 @@ export default function ChatPage() {
                       : "justify-start"
                   }`}
                 >
-                  <div
-                    className={`max-w-[70%] rounded-2xl px-4 py-3 shadow-sm ${
-                      message.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-white border"
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      {message.role === "assistant" && (
-                        <Bot className="w-4 h-4 mt-1 text-primary" />
-                      )}
-                      {message.role === "user" && (
-                        <User className="w-4 h-4 mt-1" />
-                      )}
-                      <div className="text-sm leading-relaxed">
-                        {message.content}
+                  <div className="flex flex-col max-w-[75%] w-full">
+                    <div
+                      className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                        message.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted/30 border border-border"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {message.role === "assistant" && (
+                          <Bot className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+                        )}
+                        {message.role === "user" && (
+                          <User className="w-4 h-4 mt-0.5 shrink-0" />
+                        )}
+                        <div className="whitespace-pre-wrap">
+                          {message.content}
+                        </div>
                       </div>
                     </div>
+
+                    {message.execution && (
+                      <details className="mt-2 text-xs text-muted-foreground bg-muted/20 border rounded-md px-3 py-2">
+                        <summary className="cursor-pointer font-medium">
+                          Ver ejecución ({message.execution.totalMs} ms)
+                        </summary>
+                        <div className="mt-2 space-y-1">
+                          <div className="text-[11px] uppercase tracking-wide">
+                            Modo: {message.execution.mode}
+                          </div>
+                          {message.execution.steps.map((step, index) => (
+                            <div key={index}>• {step.name}</div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 </div>
               ))}
@@ -133,10 +188,10 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            <div className="border-t p-4 bg-white">
+            <div className="border-t px-6 py-4 bg-white">
               <div className="flex items-center gap-3">
                 <Input
-                  placeholder="Ask about incidents, status, priority..."
+                  placeholder="Ej: INC0010002"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -149,8 +204,8 @@ export default function ChatPage() {
                   Send
                 </Button>
               </div>
-              <div className="text-xs text-muted-foreground mt-2">
-                Conversation ID: {conversationId ?? "—"}
+              <div className="text-[11px] text-muted-foreground mt-2">
+                Session: {conversationId?.slice(0, 8) ?? "—"}
               </div>
             </div>
           </CardContent>
