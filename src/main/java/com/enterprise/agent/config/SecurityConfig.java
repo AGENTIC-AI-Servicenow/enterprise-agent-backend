@@ -66,6 +66,9 @@ public class SecurityConfig {
                 // Debug & Status endpoints (consider restricting in production)
                 .requestMatchers("/debug/**").permitAll()
                 .requestMatchers("/api/auth/status").permitAll()
+
+                // Spring Boot default error endpoint (needed to avoid 403 masking real errors)
+                .requestMatchers("/error").permitAll()
                 
                 // OAuth Flow endpoints
                 .requestMatchers("/oauth/**").permitAll()

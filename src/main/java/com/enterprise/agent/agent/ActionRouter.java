@@ -2,7 +2,7 @@ package com.enterprise.agent.agent;
 
 import com.enterprise.agent.client.ServiceNowClient;
 import com.enterprise.agent.context.UserContext;
-import com.enterprise.agent.service.LLMService;
+import com.enterprise.agent.service.LLMProvider;
 import com.enterprise.agent.service.ServiceNowOAuthTokenProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
@@ -41,7 +41,7 @@ public class ActionRouter {
 
     private final ServiceNowClient serviceNowClient;
     private final ServiceNowOAuthTokenProvider tokenProvider;
-    private final LLMService llmService;
+    private final LLMProvider llmProvider;
     private final ConversationMemory memory;
 
     /**
@@ -64,11 +64,11 @@ public class ActionRouter {
 
     public ActionRouter(ServiceNowClient serviceNowClient,
                         ServiceNowOAuthTokenProvider tokenProvider,
-                        LLMService llmService,
+                        LLMProvider llmProvider,
                         ConversationMemory memory) {
         this.serviceNowClient = serviceNowClient;
         this.tokenProvider = tokenProvider;
-        this.llmService = llmService;
+        this.llmProvider = llmProvider;
         this.memory = memory;
     }
 
@@ -203,7 +203,7 @@ public class ActionRouter {
                     number, shortDesc, state, priority
                 );
                 
-                String summary = llmService.generateIncidentSummary(contextData);
+                String summary = llmProvider.generate(contextData, 0.3, 150);
                 
                 Map<String, Object> data = new HashMap<>();
                 data.put("incident_number", number);
@@ -288,7 +288,7 @@ public class ActionRouter {
         String userMessage = (String) intentResult.parameters().get("message");
         
         try {
-            String response = llmService.generateChatResponse(userMessage);
+            String response = llmProvider.generate(userMessage, 0.6, 120);
             return ActionResult.success(response, new HashMap<>());
             
         } catch (Exception e) {

@@ -67,10 +67,18 @@ function Term({lines}:{lines:LL[]}) {
         <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"/>
         <span className="ml-2 text-gray-600 text-[10px]">API Log — backend real</span>
       </div>
-      {lines.length===0
-        ? <span className="text-gray-600">// Pulsa "Consultar" para ver la llamada real</span>
-        : lines.map((l,i)=><div key={i} className={LC[l.kind]}>{l.msg}</div>)
-      }
+      {lines.length === 0 ? (
+        <span className="text-gray-600">
+          {/* Pulsa Consultar para ver la llamada real */}
+          Pulsa Consultar para ver la llamada real
+        </span>
+      ) : (
+        lines.map((l, i) => (
+          <div key={i} className={LC[l.kind]}>
+            {l.msg}
+          </div>
+        ))
+      )}
     </div>
   );
 }

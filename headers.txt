@@ -1,0 +1,14 @@
+HTTP/1.1 403 
+Vary: Origin
+Vary: Access-Control-Request-Method
+Vary: Access-Control-Request-Headers
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 0
+Cache-Control: no-cache, no-store, max-age=0, must-revalidate
+Pragma: no-cache
+Expires: 0
+X-Frame-Options: DENY
+Set-Cookie: JSESSIONID=1E3324EC8E7F9C126F6FB9C040E80882; Path=/; HttpOnly
+Content-Length: 0
+Date: Mon, 18 May 2026 20:03:39 GMT
+

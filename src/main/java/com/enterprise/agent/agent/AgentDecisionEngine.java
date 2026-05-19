@@ -1,7 +1,7 @@
 package com.enterprise.agent.agent;
 
 import com.enterprise.agent.memory.ConversationMemory;
-import com.enterprise.agent.service.LLMService;
+import com.enterprise.agent.service.LLMProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
@@ -23,13 +23,13 @@ import java.util.Map;
 @Service
 public class AgentDecisionEngine {
 
-    private final LLMService llmService;
+    private final LLMProvider llmProvider;
     private final ConversationMemory memory;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public AgentDecisionEngine(LLMService llmService,
+    public AgentDecisionEngine(LLMProvider llmProvider,
                                ConversationMemory memory) {
-        this.llmService = llmService;
+        this.llmProvider = llmProvider;
         this.memory = memory;
     }
 
@@ -77,7 +77,7 @@ Mensaje usuario:
 %s
 """.formatted(context, userMessage);
 
-        String response = llmService.generate(prompt, 0.1, 300);
+        String response = llmProvider.generate(prompt, 0.1, 300);
 
         try {
             JsonNode node = objectMapper.readTree(response);

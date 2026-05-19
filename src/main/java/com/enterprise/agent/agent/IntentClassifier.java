@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
-import com.enterprise.agent.service.LLMService;
+import com.enterprise.agent.service.LLMProvider;
 
 import java.util.Map;
 
@@ -37,7 +37,7 @@ import java.util.Map;
 @Log4j2
 public class IntentClassifier {
 
-    private final LLMService llmService;
+    private final LLMProvider llmProvider;
     private final ConversationMemory conversationMemory;
     private final ObjectMapper objectMapper;
 
@@ -71,8 +71,8 @@ public class IntentClassifier {
         }
     }
 
-    public IntentClassifier(LLMService llmService, ConversationMemory conversationMemory, ObjectMapper objectMapper) {
-        this.llmService = llmService;
+    public IntentClassifier(LLMProvider llmProvider, ConversationMemory conversationMemory, ObjectMapper objectMapper) {
+        this.llmProvider = llmProvider;
         this.conversationMemory = conversationMemory;
         this.objectMapper = objectMapper;
     }
@@ -96,7 +96,7 @@ public class IntentClassifier {
             String systemPrompt = buildClassificationPrompt(userContext, sessionId);
             
             // 2. Llamar a LLM (Ollama)
-            String llmResponse = llmService.classify(systemPrompt, userInput);
+            String llmResponse = llmProvider.agentChat(systemPrompt, userInput);
             
             log.debug("LLM response: {}", llmResponse);
             

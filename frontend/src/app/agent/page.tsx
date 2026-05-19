@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, Badge, Button, Textarea } fro
 import { useAgent } from "@/hooks/use-agent";
 import { Message } from "@/types";
 import { Send, Bot, User, Loader2, Sparkles } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 
 export default function AgentPage() {
   const { sendMessage, isLoading, messages: agentMessages } = useAgent();
@@ -13,15 +13,26 @@ export default function AgentPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Combine welcome message with agent messages
-  const messages = [
-    {
-      id: "welcome",
-      role: "assistant" as const,
-      content: "Hello! I'm your Enterprise AI Assistant. I can help you with incident classification, summarization, resolution suggestions, and much more. How can I assist you today?",
-      timestamp: new Date().toISOString(),
-    },
-    ...agentMessages,
-  ];
+  const messages = useMemo(
+    () => [
+      {
+        id: "welcome",
+        role: "assistant" as const,
+        content:
+          "¡Hola! 👋 Soy AideBot, tu asistente virtual de soporte TI.\n\n" +
+          "Estoy aquí para ayudarte con:\n\n" +
+          "• 🔑 Recuperación de contraseña\n" +
+          "• 📄 Consulta y seguimiento de tickets\n" +
+          "• 📞 Escalamiento a soporte técnico\n\n" +
+          "¿Con qué te puedo ayudar hoy? 😊",
+        // Avoid Next.js hydration mismatch: server render and client render happen at different times.
+        // A stable timestamp ensures the server HTML matches the first client render.
+        timestamp: "1970-01-01T00:00:00.000Z",
+      },
+      ...agentMessages,
+    ],
+    [agentMessages]
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -36,8 +47,24 @@ export default function AgentPage() {
 
     const message = input;
     setInput("");
-    
+
     // sendMessage handles adding the message to the conversation
+    sendMessage(message);
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const sendWithDelay = async (message: string) => {
+    if (!message.trim() || isLoading) return;
+
+    // Pre-fill input to match the UX in the mock
+    setInput(message);
+
+    // Small delay so the user sees the text before it gets sent
+    await sleep(150);
+
+    // Clear input and send immediately (no extra sleep)
+    setInput("");
     sendMessage(message);
   };
 
@@ -71,13 +98,13 @@ export default function AgentPage() {
       title="AI Assistant"
       subtitle="Chat with your intelligent ServiceNow copilot"
     >
-      <div className="grid h-[calc(100vh-12rem)] grid-cols-1 gap-6 lg:grid-cols-4">
+      <div className="grid h-[calc(100vh-10rem)] grid-cols-1 gap-6 lg:grid-cols-4 overflow-hidden">
         {/* Chat Area */}
-        <Card className="lg:col-span-3 flex flex-col">
-          <CardHeader className="border-b">
+        <Card className="lg:col-span-3 flex flex-col overflow-hidden">
+          <CardHeader className="border-b shrink-0">
             <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Bot className="h-5 w-5 text-primary" />
+              <CardTitle className="flex items-center gap-3">
+                <Bot className="h-4 w-4 text-primary" />
                 Enterprise AI Agent
               </CardTitle>
               <Badge variant="success" className="flex items-center gap-1">
@@ -87,7 +114,7 @@ export default function AgentPage() {
             </div>
           </CardHeader>
 
-          <CardContent className="flex-1 overflow-y-auto p-6 space-y-4">
+          <CardContent className="flex-1 overflow-y-auto p-6 space-y-4 min-h-0">
             {messages.map((message) => (
               <div
                 key={message.id}
@@ -108,13 +135,22 @@ export default function AgentPage() {
                       : "bg-muted"
                   }`}
                 >
-                  {message.metadata?.action && (
-                    <div className="mb-2">
-                      {getActionBadge(message.metadata.action)}
+                  {(message.metadata as any)?.action === "TYPING" ? (
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin opacity-70" />
+                      <span className="text-xs opacity-70">Escribiendo…</span>
                     </div>
-                  )}
+                  ) : (
+                    <>
+                      {message.metadata?.action && (
+                        <div className="mb-2">
+                          {getActionBadge(message.metadata.action)}
+                        </div>
+                      )}
 
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    </>
+                  )}
 
                   {message.metadata?.confidence !== undefined && (
                     <div className="mt-2 text-xs opacity-70">
@@ -164,10 +200,33 @@ export default function AgentPage() {
             <div ref={messagesEndRef} />
           </CardContent>
 
-          <div className="border-t p-4">
+          <div className="border-t p-6 space-y-4 shrink-0 bg-background">
+            {/* Quick chips above the input */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full"
+                disabled={isLoading}
+                onClick={() => sendWithDelay("Recuperar contraseña")}
+              >
+                🔑 Recuperar Contraseña
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full"
+                disabled={isLoading}
+                onClick={() => sendWithDelay("Consultar ticket")}
+              >
+                🎫 Consultar Ticket
+              </Button>
+            </div>
+
             <div className="flex gap-2">
               <Textarea
-                placeholder="Ask me anything about incidents, or request assistance..."
+                placeholder="Escribe un mensaje a AideBot..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -187,21 +246,22 @@ export default function AgentPage() {
                 )}
               </Button>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Press Enter to send, Shift+Enter for new line
+
+            <p className="text-xs text-muted-foreground">
+              Enter para enviar, Shift+Enter para nueva línea
             </p>
           </div>
         </Card>
 
         {/* Quick Actions */}
-        <Card className="lg:col-span-1">
+        <Card className="lg:col-span-1 h-full overflow-hidden flex flex-col">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Sparkles className="h-4 w-4 text-primary" />
               Quick Actions
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-2 overflow-y-auto min-h-0">
             <button
               onClick={() => setInput("Classify the most recent incident")}
               className="w-full rounded-lg border p-3 text-left text-sm transition-colors hover:bg-accent"

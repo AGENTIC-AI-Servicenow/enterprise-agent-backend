@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
@@ -15,15 +16,26 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Ollama Implementation of LLMProvider
+ *
+ * Activated only when:
+ * llm.provider=ollama (default if missing)
+ */
 @Service
-public class LLMService {
+@ConditionalOnProperty(name = "llm.provider", havingValue = "ollama", matchIfMissing = true)
+public class LLMService implements LLMProvider {
 
     private final WebClient webClient;
 
-    @Value("${ollama.model}")
+    @Value("${llm.ollama.base-url:http://localhost:11434}")
+    private String baseUrl;
+
+    @Value("${llm.ollama.model:qwen2.5:7b}")
     private String model;
 
-    public LLMService(WebClient.Builder builder) {
+    public LLMService(WebClient.Builder builder,
+                      @Value("${llm.ollama.base-url:http://localhost:11434}") String baseUrl) {
 
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
@@ -32,80 +44,44 @@ public class LLMService {
                         conn.addHandlerLast(new ReadTimeoutHandler(120, TimeUnit.SECONDS)));
 
         this.webClient = builder
-                .baseUrl("http://localhost:11434")
+                .baseUrl(baseUrl)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
     }
 
     // =====================================================
-    // 1️⃣ CLASIFICADOR DE INTENCIÓN (JSON ESTRICTO)
+    // AGENTIC CHAT
     // =====================================================
-    
-    /**
-     * Método genérico para clasificación con system prompt personalizado
-     * Usado por IntentClassifier
-     */
+    @Override
+    public String agentChat(String systemPrompt, String conversationContext) {
+
+        String fullPrompt = """
+%s
+
+Debes razonar paso a paso internamente.
+Responde ÚNICAMENTE en JSON válido con el siguiente formato:
+
+{
+  "thought": "razonamiento interno",
+  "action": "CHAT | GET_INCIDENT | CREATE_INCIDENT | FINISH",
+  "parameters": { }
+}
+
+Contexto:
+%s
+""".formatted(systemPrompt, conversationContext);
+
+        return generate(fullPrompt, 0.2, 400);
+    }
+
+    // =====================================================
+    // CLASSIFICATION (Compatibilidad legacy)
+    // =====================================================
     public String classify(String systemPrompt, String userInput) {
         String fullPrompt = systemPrompt + "\n\n" + userInput;
         return generate(fullPrompt, 0.0, 300);
     }
-    
-    /**
-     * Método legacy para clasificación simple
-     */
-    public String classifyIntent(String userInput) {
 
-        String systemPrompt = """
-Eres un clasificador estricto de intención.
-
-Responde SOLO en JSON válido.
-No escribas texto adicional.
-No expliques nada.
-
-Acciones posibles:
-
-1) GET_INCIDENT
-   Parámetro opcional: number
-
-2) CREATE_INCIDENT
-   Parámetros: short_description, description, priority
-
-3) CHAT
-
-Reglas:
-
-- Si el usuario menciona un número que empiece por INC → GET_INCIDENT con number.
-- Si el usuario habla de "mi última incidencia", "mi incidente más reciente" o similar → GET_INCIDENT sin number.
-- Si el usuario quiere crear un incidente → CREATE_INCIDENT.
-- Si no requiere acción técnica → CHAT.
-- Nunca escribas texto fuera del JSON.
-
-Formatos obligatorios:
-
-GET_INCIDENT con número:
-{ "action": "GET_INCIDENT", "number": "INC0012345" }
-
-GET_INCIDENT sin número:
-{ "action": "GET_INCIDENT" }
-
-CREATE_INCIDENT:
-{ 
-  "action": "CREATE_INCIDENT",
-  "short_description": "...",
-  "description": "...",
-  "priority": "3"
-}
-
-CHAT:
-{ "action": "CHAT" }
-""";
-
-        return generate(systemPrompt + "\n\nUsuario: " + userInput, 0, 200);
-    }
-
-    // =====================================================
-    // 2️⃣ RESUMEN DE INCIDENTE
-    // =====================================================
     public String generateIncidentSummary(String contextData) {
 
         String prompt = """
@@ -125,9 +101,6 @@ Información:
         return generate(prompt, 0.3, 150);
     }
 
-    // =====================================================
-    // 3️⃣ CONVERSACIÓN LIBRE
-    // =====================================================
     public String generateChatResponse(String userInput) {
 
         String prompt = """
@@ -146,36 +119,9 @@ Usuario:
     }
 
     // =====================================================
-    // 4️⃣ AGENTIC CHAT (ReAct JSON)
+    // GENERATE (OLLAMA)
     // =====================================================
-    public String agentChat(String systemPrompt, String conversationContext) {
-
-        String fullPrompt = """
-%s
-
-Debes razonar paso a paso internamente.
-Responde ÚNICAMENTE en JSON válido con el siguiente formato:
-
-{
-  "thought": "razonamiento interno",
-  "action": "CHAT | GET_INCIDENT | CREATE_INCIDENT | FINISH",
-  "parameters": { }
-}
-
-Si necesitas ejecutar una acción técnica usa GET_INCIDENT o CREATE_INCIDENT.
-Si solo es conversación usa CHAT.
-Si ya tienes la respuesta final usa FINISH.
-
-Contexto:
-%s
-""".formatted(systemPrompt, conversationContext);
-
-        return generate(fullPrompt, 0.2, 400);
-    }
-
-    // =====================================================
-    // MÉTODO CENTRALIZADO
-    // =====================================================
+    @Override
     public String generate(String prompt, double temperature, int maxTokens) {
 
         Map<String, Object> body = new HashMap<>();

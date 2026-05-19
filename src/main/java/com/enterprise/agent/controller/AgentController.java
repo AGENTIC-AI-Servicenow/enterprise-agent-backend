@@ -65,6 +65,7 @@ public class AgentController {
     public static class ChatResponse {
         private boolean success;
         private String message;
+        private List<String> messages; // opcional: para entregar múltiples burbujas en un solo response
         private Map<String, Object> data;
         private String intent;
         private double confidence;
@@ -73,6 +74,7 @@ public class AgentController {
         
         public static ChatResponse success(
                 String message, 
+                List<String> messages,
                 Map<String, Object> data,
                 String intent,
                 double confidence,
@@ -82,6 +84,7 @@ public class AgentController {
             ChatResponse response = new ChatResponse();
             response.success = true;
             response.message = message;
+            response.messages = messages;
             response.data = data != null ? data : new HashMap<>();
             response.intent = intent;
             response.confidence = confidence;
@@ -189,8 +192,26 @@ public class AgentController {
                 ? ((Number) result.getMetadata().get("confidence")).doubleValue()
                 : 0.0;
             
+            // Soporte para múltiples mensajes en 1 response:
+            // para GET_INCIDENT siempre entregamos 2 burbujas (confirmación + resumen).
+            List<String> multi = null;
+            if ("GET_INCIDENT".equals(result.getIntent())) {
+                String raw = result.getMessage() == null ? "" : result.getMessage();
+                String[] parts = raw.split("\\n\\n+");
+                if (parts.length >= 2) {
+                    // tomar SOLO las 2 primeras partes para asegurar el layout pedido
+                    String p1 = parts[0].trim();
+                    String p2 = parts[1].trim();
+                    multi = List.of(p1, p2);
+                } else {
+                    // fallback si por alguna razón llega 1 parte
+                    multi = List.of(raw);
+                }
+            }
+
             ChatResponse response = ChatResponse.success(
                 result.getMessage(),
+                multi,
                 responseData,
                 result.getIntent(),
                 confidence,
@@ -305,8 +326,22 @@ public class AgentController {
                 ? ((Number) result.getMetadata().get("confidence")).doubleValue()
                 : 0.0;
             
+            List<String> multi = null;
+            if ("GET_INCIDENT".equals(result.getIntent())) {
+                String raw = result.getMessage() == null ? "" : result.getMessage();
+                String[] parts = raw.split("\\n\\n+");
+                if (parts.length >= 2) {
+                    String p1 = parts[0].trim();
+                    String p2 = parts[1].trim();
+                    multi = List.of(p1, p2);
+                } else {
+                    multi = List.of(raw);
+                }
+            }
+
             ChatResponse response = ChatResponse.success(
                 result.getMessage(),
+                multi,
                 responseData,
                 result.getIntent(),
                 confidence,

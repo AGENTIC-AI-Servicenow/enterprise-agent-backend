@@ -5,7 +5,7 @@ import com.enterprise.agent.context.UserContext;
 import com.enterprise.agent.memory.ConversationMemory;
 import com.enterprise.agent.service.IncidentPolicyService;
 import com.enterprise.agent.service.IncidentRendererService;
-import com.enterprise.agent.service.LLMService;
+import com.enterprise.agent.service.LLMProvider;
 import lombok.Data;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
@@ -29,7 +29,7 @@ import java.util.UUID;
 public class AgentOrchestrator {
 
     private final ConversationMemory conversationMemory;
-    private final LLMService llmService;
+    private final LLMProvider llmProvider;
     private final IncidentPolicyService incidentPolicyService;
     private final IncidentRendererService incidentRendererService;
     private final ServiceNowClient serviceNowClient;
@@ -56,7 +56,7 @@ public class AgentOrchestrator {
 
     public AgentOrchestrator(
             ConversationMemory conversationMemory,
-            LLMService llmService,
+            LLMProvider llmProvider,
             IncidentPolicyService incidentPolicyService,
             IncidentRendererService incidentRendererService,
             ServiceNowClient serviceNowClient,
@@ -64,7 +64,7 @@ public class AgentOrchestrator {
             com.enterprise.agent.service.OperationalRiskService riskService) {
 
         this.conversationMemory = conversationMemory;
-        this.llmService = llmService;
+        this.llmProvider = llmProvider;
         this.incidentPolicyService = incidentPolicyService;
         this.incidentRendererService = incidentRendererService;
         this.serviceNowClient = serviceNowClient;
@@ -103,10 +103,38 @@ public class AgentOrchestrator {
             }
 
             if (incidentNumber == null) {
+                // Si el usuario no mencionó un incidente, tratamos el mensaje como conversación libre.
+                // Esto evita respuestas "UNKNOWN" ante saludos como "Hola".
+                String systemPrompt = """
+Eres AideBot 🤖, un asistente de soporte TI (ServiceNow copilot) amable y profesional.
+
+ESTILO:
+- Escribe en español natural, claro y conversacional.
+- Usa emojis con moderación (1–3 por mensaje) para dar calidez, sin saturar.
+- Sé proactivo: sugiere próximos pasos cuando aplique.
+- Si el usuario pide datos de un incidente, solicita el número (ej: INC0012345).
+
+REGLAS:
+- No inventes datos. Si falta información, dilo y pide el dato.
+- Si el usuario saluda, responde con saludo breve + pregunta de necesidad.
+
+FORMATO:
+- Respuestas cortas (2–6 líneas), con bullets cuando ayuden.
+
+""";
+
+                String reply = llmProvider.agentChat(systemPrompt, message);
+
+                conversationMemory.addAssistantMessage(
+                        sessionId,
+                        reply,
+                        Map.of("intent", "CHAT")
+                );
+
                 return buildResponse(
-                        "No se pudo identificar el incidente en la solicitud.",
-                        "UNKNOWN",
-                        false,
+                        reply,
+                        "CHAT",
+                        true,
                         sessionId,
                         startTime
                 );
@@ -156,12 +184,33 @@ public class AgentOrchestrator {
 
             switch (plan.getIntent()) {
 
-                case "QUERY_FIELD":
-                    rendered = incidentRendererService.renderField(
-                            safe,
-                            plan.getFieldRequested()
-                    );
+                case "QUERY_FIELD": {
+                    String field = plan.getFieldRequested();
+                    rendered = incidentRendererService.renderField(safe, field);
+
+                    // Si el renderer no encuentra el campo, damos un fallback “humano”
+                    // para preguntas típicas (creación / apertura) y variaciones.
+                    if (rendered == null || rendered.isBlank() || rendered.equalsIgnoreCase("No disponible")) {
+                        String f = field == null ? "" : field.toLowerCase();
+
+                        if (f.contains("created") || f.contains("creado") || f.contains("creación") || f.contains("sys_created_on")) {
+                            var n = safe.get("sys_created_on");
+                            String v = (n != null && !n.isNull() && !n.asText().isBlank()) ? n.asText() : null;
+                            rendered = v != null
+                                    ? "📅 La fecha de creación es: " + v
+                                    : "🤔 No encuentro la fecha de creación en los datos disponibles.";
+                        } else if (f.contains("opened") || f.contains("abierto") || f.contains("apertura") || f.contains("opened_at")) {
+                            var n = safe.get("opened_at");
+                            String v = (n != null && !n.isNull() && !n.asText().isBlank()) ? n.asText() : null;
+                            rendered = v != null
+                                    ? "📅 Se abrió el: " + v
+                                    : "🤔 No encuentro la fecha de apertura (opened_at) en los datos disponibles.";
+                        } else {
+                            rendered = "🤔 No tengo ese dato disponible para este incidente. ¿Qué campo específico necesitas (prioridad, estado, asignado, fecha de creación)?";
+                        }
+                    }
                     break;
+                }
 
                 case "SUMMARY":
                     if ("executive".equals(plan.getSummaryType())) {
@@ -172,7 +221,7 @@ public class AgentOrchestrator {
                     break;
 
                 case "RECOMMENDATION":
-                    rendered = llmService.generate("""
+                    rendered = llmProvider.generate("""
 Analiza el incidente y genera una recomendación profesional breve.
 
 Evalúa:
@@ -187,11 +236,26 @@ Datos:
                     break;
 
                 case "GET_INCIDENT":
-                default:
-                    rendered = incidentRendererService.renderStructuredView(safe)
+                default: {
+                    // 1) mensaje de confirmación (primer mensaje)
+                    String intro = "✅ ¡Encontré tu ticket! 🎯";
+
+                    conversationMemory.addAssistantMessage(
+                            sessionId,
+                            intro,
+                            Map.of("intent", "GET_INCIDENT",
+                                   "incident_id", incidentNumber,
+                                   "part", "intro")
+                    );
+
+                    // 2) mensaje de resumen (segundo mensaje)
+                    String summary = incidentRendererService.renderStructuredView(safe)
                             + "\n\nRisk Score: " + risk.score
                             + "\nRisk Level: " + risk.level;
+
+                    rendered = summary;
                     break;
+                }
             }
 
             conversationMemory.addAssistantMessage(
@@ -200,6 +264,19 @@ Datos:
                     Map.of("intent", plan.getIntent(),
                            "incident_id", incidentNumber)
             );
+
+            // Para GET_INCIDENT queremos 2 burbujas: confirmación + resumen.
+            // El controller expone ChatResponse.messages y el frontend lo renderiza.
+            // IMPORTANTE: aquí retornamos message con separador \n\n para que el controller lo parta en 2.
+            if ("GET_INCIDENT".equals(plan.getIntent())) {
+                return buildResponse(
+                        "✅ ¡Encontré tu ticket! 🎯 Aquí tienes el resumen completo:\n\n" + rendered,
+                        plan.getIntent(),
+                        true,
+                        sessionId,
+                        startTime
+                );
+            }
 
             return buildResponse(
                     rendered,

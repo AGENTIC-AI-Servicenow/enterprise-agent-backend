@@ -25,8 +25,19 @@ servicenow:
 frontend:
   url: ${FRONTEND_URL:http://localhost:3000}
 
-ollama:
-  model: qwen2.5:7b
+llm:
+  provider: azure
+
+  ollama:
+    base-url: http://localhost:11434
+    model: qwen2.5:7b
+
+  azure:
+    endpoint: https://modelagenticai.openai.azure.com
+    deployment: gpt-4o-mini
+    api-key: "4ytxJtMFqMnOc5GpvbasnA3JNst7GRIdNKoeugYYatFvh90J1gTuJQQJ99CEAC1i4TkXJ3w3AAABACOGQDWq"
+    # api-key: ${AZURE_OPENAI_KEY:}
+    api-version: 2024-02-15-preview
 
 logging:
   level:

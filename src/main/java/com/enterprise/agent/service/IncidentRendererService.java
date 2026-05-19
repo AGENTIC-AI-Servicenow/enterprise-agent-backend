@@ -19,10 +19,10 @@ import org.springframework.stereotype.Service;
 @Service
 public class IncidentRendererService {
 
-    private final LLMService llmService;
+    private final LLMProvider llmProvider;
 
-    public IncidentRendererService(LLMService llmService) {
-        this.llmService = llmService;
+    public IncidentRendererService(LLMProvider llmProvider) {
+        this.llmProvider = llmProvider;
     }
 
     public String renderIncident(JsonNode safeIncidentJson) {
@@ -49,7 +49,7 @@ Datos del incidente:
 %s
 """.formatted(safeIncidentJson.toPrettyString());
 
-        return llmService.generate(prompt, 0.2, 220);
+        return llmProvider.generate(prompt, 0.2, 220);
     }
 
     public String renderField(JsonNode safeIncidentJson, String field) {
@@ -96,7 +96,7 @@ Datos del incidente:
 %s
 """.formatted(safeIncidentJson.toPrettyString());
 
-        return llmService.generate(prompt, 0.2, 110);
+        return llmProvider.generate(prompt, 0.2, 110);
     }
 
     public String renderShortSummary(JsonNode safeIncidentJson) {
@@ -110,7 +110,7 @@ Datos del incidente:
 %s
 """.formatted(safeIncidentJson.toPrettyString());
 
-        return llmService.generate(prompt, 0.2, 60);
+        return llmProvider.generate(prompt, 0.2, 60);
     }
 
     /**

@@ -60,8 +60,63 @@ async function fetchApi<T>(
 // ============================================================================
 
 export const agentApi = {
+  /**
+   * Chat with the agent.
+   *
+   * Uses /api/agent/chat as the canonical endpoint.
+   * If the backend is running in "MVP/test" mode, it may also expose /api/agent/test.
+   * We keep a transparent fallback so the UI works across environments.
+   */
   async chat(request: AgentRequest): Promise<AgentResponse> {
-    // ✅ Using /test endpoint for local development (no auth required)
+    /**
+     * Backend expects the "ServiceNow widget" shape:
+     * {
+     *   message: string,
+     *   sessionId?: string,
+     *   user?: { sys_id: string, username?: string, ... }
+     * }
+     *
+     * Our frontend uses a simplified AgentRequest shape:
+     * { message, context?: { conversationId? } }
+     *
+     * For local web UI we auto-inject a "dev user" so /api/agent/chat works.
+     * In real ServiceNow integration, the widget will pass the real user context.
+     */
+    const sessionId =
+      (request as any)?.context?.conversationId ||
+      (request as any)?.sessionId ||
+      undefined;
+
+    const payload = {
+      message: request.message,
+      sessionId,
+      user: {
+        sys_id: 'web-ui-dev-user',
+        username: 'web.ui',
+        email: 'web.ui@local',
+        fullName: 'Web UI Dev User',
+        roles: ['user', 'analyst'],
+      },
+    };
+
+    try {
+      return await fetchApi<AgentResponse>('/api/agent/chat', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      // Fallback: older/local endpoint used in this repo for development
+      if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
+        return fetchApi<AgentResponse>('/api/agent/test', {
+          method: 'POST',
+          body: JSON.stringify({ message: request.message, sessionId }),
+        });
+      }
+      throw e;
+    }
+  },
+
+  async test(request: AgentRequest): Promise<AgentResponse> {
     return fetchApi<AgentResponse>('/api/agent/test', {
       method: 'POST',
       body: JSON.stringify(request),
