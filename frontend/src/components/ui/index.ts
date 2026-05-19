@@ -13,3 +13,6 @@ export { Badge, badgeVariants } from "./badge";
 export type { BadgeProps } from "./badge";
 
 export { Spinner } from "./spinner";
+
+export { Switch } from "./switch";
+export type { SwitchProps } from "./switch";

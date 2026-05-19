@@ -105,8 +105,20 @@ export const agentApi = {
         body: JSON.stringify(payload),
       });
     } catch (e) {
-      // Fallback: older/local endpoint used in this repo for development
-      if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
+      // Fallback: older/local endpoint used in this repo for development (Ollama/local).
+      // This fallback can be disabled via Settings: ea.settings.ollamaEnabled=false
+      const ollamaEnabled =
+        typeof window !== "undefined"
+          ? localStorage.getItem("ea.settings.ollamaEnabled")
+          : null;
+
+      const allowFallback = ollamaEnabled === null ? true : ollamaEnabled === "true";
+
+      if (
+        allowFallback &&
+        e instanceof ApiError &&
+        (e.status === 404 || e.status === 405)
+      ) {
         return fetchApi<AgentResponse>('/api/agent/test', {
           method: 'POST',
           body: JSON.stringify({ message: request.message, sessionId }),

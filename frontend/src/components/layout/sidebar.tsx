@@ -27,8 +27,8 @@ const menuItems = [
     icon: FileText,
   },
   {
-    title: "AI Assistant",
-    href: "/chat",
+    title: "Enterprise Agent",
+    href: "/agent",
     icon: MessageSquare,
   },
   {
