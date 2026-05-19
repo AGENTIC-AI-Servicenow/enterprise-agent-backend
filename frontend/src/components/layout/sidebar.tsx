@@ -10,6 +10,7 @@ import {
   Settings,
   LogOut,
 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 
 interface SidebarProps {
   className?: string;
@@ -40,11 +41,17 @@ const menuItems = [
 
 export function Sidebar({ className }: SidebarProps) {
   const pathname = usePathname();
+  const { logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    window.location.href = "/login";
+  };
 
   return (
     <aside
       className={cn(
-        "flex h-screen w-64 flex-col border-r bg-card",
+        "flex h-screen w-64 flex-col border-r border-white/40 bg-white/70 backdrop-blur-xl shadow-sm",
         className
       )}
     >
@@ -69,10 +76,10 @@ export function Sidebar({ className }: SidebarProps) {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200",
                 isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  ? "bg-primary/90 text-white shadow-sm"
+                  : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
               )}
             >
               <Icon className="h-5 w-5" />
@@ -85,11 +92,8 @@ export function Sidebar({ className }: SidebarProps) {
       {/* User section */}
       <div className="border-t p-4">
         <button
-          className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          onClick={() => {
-            // Logout logic will be implemented
-            console.log("Logout");
-          }}
+          className="flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-all duration-200 hover:bg-primary/10 hover:text-primary"
+          onClick={handleLogout}
         >
           <LogOut className="h-5 w-5" />
           <span>Logout</span>
