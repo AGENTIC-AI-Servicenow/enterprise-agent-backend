@@ -23,7 +23,7 @@ export function Header({ title, subtitle }: HeaderProps) {
   };
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between px-6 backdrop-blur-xl bg-white/70 border-b border-white/40">
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between px-6 backdrop-blur-xl bg-white/70 border-b border-white/40 dark:bg-slate-900/90 dark:border-white/10">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         {subtitle && (

@@ -87,14 +87,19 @@ export const agentApi = {
       (request as any)?.sessionId ||
       undefined;
 
+    const userId =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('user_id') || 'web-ui-dev-user'
+        : 'web-ui-dev-user';
+
     const payload = {
       message: request.message,
       sessionId,
       user: {
-        sys_id: 'web-ui-dev-user',
-        username: 'web.ui',
-        email: 'web.ui@local',
-        fullName: 'Web UI Dev User',
+        sys_id: userId,
+        username: userId,
+        email: `${userId}@local`,
+        fullName: userId,
         roles: ['user', 'analyst'],
       },
     };

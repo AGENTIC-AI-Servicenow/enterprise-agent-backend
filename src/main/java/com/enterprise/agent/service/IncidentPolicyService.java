@@ -61,13 +61,23 @@ public class IncidentPolicyService {
 
         safe.put("opened_at", openedAt);
 
-        // Normalización de estado
-        String state = rawIncident.path("state").asText();
-        safe.put("state", mapState(state));
+        // ✅ Normalización de estado (puede venir como objeto con display_value)
+        String state;
+        if (rawIncident.has("state") && rawIncident.get("state").isObject()) {
+            state = rawIncident.get("state").path("display_value").asText("");
+        } else {
+            state = rawIncident.path("state").asText("");
+        }
+        safe.put("state", state.isBlank() ? "Desconocido" : state);
 
-        // Normalización de prioridad
-        String priority = rawIncident.path("priority").asText();
-        safe.put("priority", mapPriority(priority));
+        // ✅ Normalización de prioridad (puede venir como objeto con display_value)
+        String priority;
+        if (rawIncident.has("priority") && rawIncident.get("priority").isObject()) {
+            priority = rawIncident.get("priority").path("display_value").asText("");
+        } else {
+            priority = rawIncident.path("priority").asText("");
+        }
+        safe.put("priority", priority.isBlank() ? "No definida" : priority);
 
         // Assigned to (puede venir vacío)
         String assigned = "";

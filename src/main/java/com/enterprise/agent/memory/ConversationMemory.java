@@ -32,6 +32,10 @@ import java.util.stream.Collectors;
 @Log4j2
 public class ConversationMemory {
 
+    // 🧠 Nuevo: estado conversacional por sesión
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.Map<String, Object>> sessionState
+            = new java.util.concurrent.ConcurrentHashMap<>();
+
     // Almacenamiento por sesión
     private final Map<String, SessionMemory> sessions = new ConcurrentHashMap<>();
     
@@ -141,22 +145,48 @@ public class ConversationMemory {
      */
     public String getLastIncidentId(String sessionId) {
         SessionMemory session = sessions.get(sessionId);
-        
+
         if (session == null) {
             return null;
         }
-        
+
         // Buscar en orden inverso
         for (int i = session.getMessages().size() - 1; i >= 0; i--) {
             ConversationMessage msg = session.getMessages().get(i);
             Object incidentId = msg.getMetadata().get("incident_id");
-            
+
             if (incidentId != null) {
                 return incidentId.toString();
             }
         }
-        
+
         return null;
+    }
+
+    // ==============================
+    // 🧠 Conversational State Methods
+    // ==============================
+
+    public void setSessionValue(String sessionId, String key, Object value) {
+        sessionState
+                .computeIfAbsent(sessionId, k -> new java.util.concurrent.ConcurrentHashMap<>())
+                .put(key, value);
+    }
+
+    public Object getSessionValue(String sessionId, String key) {
+        var state = sessionState.get(sessionId);
+        return state != null ? state.get(key) : null;
+    }
+
+    public void clearSessionValue(String sessionId, String key) {
+        var state = sessionState.get(sessionId);
+        if (state != null) {
+            state.remove(key);
+        }
+    }
+
+    public void clearSessionState(String sessionId) {
+        sessionState.remove(sessionId);
     }
 
     /**

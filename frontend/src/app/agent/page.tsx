@@ -132,7 +132,7 @@ export default function AgentPage() {
                   className={`max-w-[75%] px-5 py-4 text-sm leading-relaxed backdrop-blur-sm transition-all duration-200 ${
                     message.role === "user"
                       ? "bg-primary text-white rounded-2xl rounded-br-md shadow-[0_6px_20px_rgba(37,99,235,0.25)]"
-                      : "bg-gradient-to-br from-white/80 to-blue-50/70 border border-primary/20 rounded-2xl rounded-bl-md shadow-[0_6px_18px_rgba(37,99,235,0.12)]"
+                      : "bg-gradient-to-br from-white/80 to-blue-50/70 border border-primary/20 rounded-2xl rounded-bl-md shadow-[0_6px_18px_rgba(37,99,235,0.12)] dark:from-slate-900/80 dark:to-slate-800/70 dark:border-white/10 dark:shadow-[0_6px_20px_rgba(0,0,0,0.6)]"
                   }`}
                 >
                   {(message.metadata as any)?.action === "TYPING" ? (
@@ -203,7 +203,9 @@ export default function AgentPage() {
             <div ref={messagesEndRef} />
           </CardContent>
 
-          <div className="border-t border-white/40 p-4 space-y-3 shrink-0 bg-transparent backdrop-blur-sm">
+          <div className="relative border-t border-white/20 p-4 space-y-3 shrink-0 bg-white/50 dark:bg-slate-900/50 backdrop-blur-lg">
+            {/* Softer blur gradient overlay */}
+            <div className="pointer-events-none absolute -top-8 left-0 right-0 h-8 bg-gradient-to-t from-white/40 via-white/20 to-transparent dark:from-slate-900/40 dark:via-slate-900/20 backdrop-blur-md" />
             {/* Quick chips above the input */}
             <div className="flex flex-wrap gap-1.5">
               <Button
@@ -269,7 +271,7 @@ export default function AgentPage() {
           <CardContent className="space-y-1.5 overflow-y-auto min-h-0 p-4 pt-0">
             <button
               onClick={() => setInput("Classify the most recent incident")}
-              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white"
+              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white dark:bg-slate-900/70 dark:border-white/10 dark:hover:bg-slate-800"
               disabled={isLoading}
             >
               <div className="font-semibold text-foreground">
@@ -282,7 +284,7 @@ export default function AgentPage() {
 
             <button
               onClick={() => setInput("Summarize all open incidents")}
-              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white"
+              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white dark:bg-slate-900/70 dark:border-white/10 dark:hover:bg-slate-800"
               disabled={isLoading}
             >
               <div className="font-semibold text-foreground">
@@ -295,7 +297,7 @@ export default function AgentPage() {
 
             <button
               onClick={() => setInput("Suggest resolution for high priority incidents")}
-              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white"
+              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white dark:bg-slate-900/70 dark:border-white/10 dark:hover:bg-slate-800"
               disabled={isLoading}
             >
               <div className="font-semibold text-foreground">
@@ -308,7 +310,7 @@ export default function AgentPage() {
 
             <button
               onClick={() => setInput("Search knowledge base for network issues")}
-              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white"
+              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white dark:bg-slate-900/70 dark:border-white/10 dark:hover:bg-slate-800"
               disabled={isLoading}
             >
               <div className="font-semibold text-foreground">
@@ -321,7 +323,7 @@ export default function AgentPage() {
 
             <button
               onClick={() => setInput("Detect duplicate incidents")}
-              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white"
+              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white dark:bg-slate-900/70 dark:border-white/10 dark:hover:bg-slate-800"
               disabled={isLoading}
             >
               <div className="font-semibold text-foreground">
@@ -334,7 +336,7 @@ export default function AgentPage() {
 
             <button
               onClick={() => setInput("Prioritize current incidents")}
-              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white"
+              className="w-full rounded-xl border border-white/40 bg-white/80 backdrop-blur-sm p-3 text-left text-sm shadow-[0_4px_14px_rgba(37,99,235,0.05)] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(37,99,235,0.12)] hover:border-primary/40 hover:bg-white dark:bg-slate-900/70 dark:border-white/10 dark:hover:bg-slate-800"
               disabled={isLoading}
             >
               <div className="font-semibold text-foreground">
