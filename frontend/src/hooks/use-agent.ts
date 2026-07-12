@@ -22,6 +22,12 @@ export function useAgent(options: UseAgentOptions = {}) {
     options.conversationId || null
   );
 
+  const sanitizeModelText = (value: string) =>
+    String(value || "")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/__(.*?)__/g, "$1")
+      .replace(/`([^`]+)`/g, "$1");
+
   const chatMutation = useMutation({
     mutationFn: async (request: AgentRequest) => {
       const response = await agentApi.chat(request);
@@ -32,8 +38,9 @@ export function useAgent(options: UseAgentOptions = {}) {
       // Previous shape expected timestamp/action/suggestedActions at top-level.
       const anyResp = response as any;
 
-      const content =
-        anyResp?.message ?? anyResp?.data?.message ?? anyResp?.data?.content ?? "";
+      const content = sanitizeModelText(
+        anyResp?.message ?? anyResp?.data?.message ?? anyResp?.data?.content ?? ""
+      );
 
       const timestamp =
         anyResp?.timestamp ?? anyResp?.data?.timestamp ?? new Date().toISOString();
@@ -59,7 +66,7 @@ export function useAgent(options: UseAgentOptions = {}) {
       if (Array.isArray(multi) && multi.length > 0) {
         // Render each part as a separate assistant bubble with a small typing illusion between them
         for (let i = 0; i < multi.length; i++) {
-          const part = String(multi[i] ?? "");
+          const part = sanitizeModelText(String(multi[i] ?? ""));
 
           // Add assistant bubble
           setMessages((prev) => [

@@ -102,30 +102,28 @@ public class AgentOrchestrator {
                         true,
                         sessionId,
                         start,
-                        0.99
-                );
+                        0.99);
             }
 
             // ✅ Planner AI decide todo lo demás
-            AgentDecisionEngine.AgentPlan plan =
-                    decisionEngine.analyze(sessionId, message);
+            AgentDecisionEngine.AgentPlan plan = decisionEngine.analyze(sessionId, message);
 
             double confidence = plan.getConfidence() > 0
                     ? plan.getConfidence()
                     : 0.85;
 
             // ✅ Si el mensaje contiene directamente un número de ticket (ej: INC0010198)
-            // Forzamos flujo GET_INCIDENT para evitar que el planner lo clasifique como analytics.
-            java.util.regex.Matcher ticketMatcher =
-                    java.util.regex.Pattern.compile("INC\\d{6,}", java.util.regex.Pattern.CASE_INSENSITIVE)
-                            .matcher(message);
+            // Forzamos flujo GET_INCIDENT para evitar que el planner lo clasifique como
+            // analytics.
+            java.util.regex.Matcher ticketMatcher = java.util.regex.Pattern
+                    .compile("INC\\d{6,}", java.util.regex.Pattern.CASE_INSENSITIVE)
+                    .matcher(message);
 
             if (ticketMatcher.find()) {
 
                 String ticketNumber = ticketMatcher.group().toUpperCase();
 
-                var result =
-                        serviceNowClient.getIncidentByNumber(ticketNumber);
+                var result = serviceNowClient.getIncidentByNumber(ticketNumber);
 
                 if (!result.has("result")
                         || result.get("result").isEmpty()) {
@@ -136,8 +134,7 @@ public class AgentOrchestrator {
                             false,
                             sessionId,
                             start,
-                            0.9
-                    );
+                            0.9);
                 }
 
                 var incident = result.get("result").get(0);
@@ -151,14 +148,250 @@ public class AgentOrchestrator {
                 return build(rendered, "GET_INCIDENT", true, sessionId, start, 0.95);
             }
 
-            List<com.fasterxml.jackson.databind.JsonNode> visibleIncidents = resolveVisibleIncidents(sessionId, request);
+            List<com.fasterxml.jackson.databind.JsonNode> visibleIncidents = resolveVisibleIncidents(sessionId,
+                    request);
 
-            // ✅ Casos frecuentes de demo: "mis incidentes abiertos" / "mis tickets abiertos"
+            // ✅ Casos frecuentes de demo: resumen ejecutivo de incidentes visibles
             String normalizedMessage = message.toLowerCase();
-            if ((normalizedMessage.contains("incidentes abiertos")
+
+            if ((normalizedMessage.contains("más crítico")
+                    || normalizedMessage.contains("mas critico")
+                    || normalizedMessage.contains("mayor riesgo")
+                    || normalizedMessage.contains("ticket crítico")
+                    || normalizedMessage.contains("ticket critico"))
+                    && (normalizedMessage.contains("ticket")
+                    || normalizedMessage.contains("incidente"))
+                    && !visibleIncidents.isEmpty()) {
+
+                com.fasterxml.jackson.databind.JsonNode criticalIncident = null;
+                int bestScore = Integer.MIN_VALUE;
+
+                for (var incident : visibleIncidents) {
+                    int score = 0;
+
+                    String priority = incident.path("priority").asText("");
+                    String urgency = incident.path("urgency").asText("");
+                    String impact = incident.path("impact").asText("");
+                    String state = incident.path("state").asText("");
+                    String text = (incident.path("short_description").asText("")
+                            + " "
+                            + incident.path("description").asText("")).toLowerCase();
+
+                    if ("1".equals(priority) || "critical".equalsIgnoreCase(priority)) score += 50;
+                    else if ("2".equals(priority) || "high".equalsIgnoreCase(priority)) score += 40;
+                    else if ("3".equals(priority) || "moderate".equalsIgnoreCase(priority)) score += 25;
+                    else if ("4".equals(priority) || "low".equalsIgnoreCase(priority)) score += 10;
+
+                    if ("1".equals(urgency) || "high".equalsIgnoreCase(urgency)) score += 25;
+                    else if ("2".equals(urgency) || "medium".equalsIgnoreCase(urgency)) score += 15;
+                    else if ("3".equals(urgency) || "low".equalsIgnoreCase(urgency)) score += 5;
+
+                    if ("1".equals(impact) || "high".equalsIgnoreCase(impact)) score += 25;
+                    else if ("2".equals(impact) || "medium".equalsIgnoreCase(impact)) score += 15;
+                    else if ("3".equals(impact) || "low".equalsIgnoreCase(impact)) score += 5;
+
+                    if ("2".equals(state) || "In Progress".equalsIgnoreCase(state)) score += 8;
+                    if ("1".equals(state) || "New".equalsIgnoreCase(state)) score += 5;
+
+                    if (text.contains("pago") || text.contains("payment")) score += 20;
+                    if (text.contains("auth") || text.contains("autentic")) score += 20;
+                    if (text.contains("producción") || text.contains("produccion")) score += 15;
+                    if (text.contains("inventario")) score += 10;
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        criticalIncident = incident;
+                    }
+                }
+
+                if (criticalIncident == null) {
+                    return build(
+                            "No pude identificar un ticket crítico con la información visible actual.",
+                            "GET_CRITICAL_INCIDENT",
+                            false,
+                            sessionId,
+                            start,
+                            0.8
+                    );
+                }
+
+                var safe = policyService.applyPolicy(criticalIncident, request.getUserContext());
+                String summary = llm.generate("""
+Devuelve una respuesta breve, natural y ejecutiva sobre el ticket más crítico.
+Habla como un copiloto operativo, no como un sistema técnico.
+Incluye en 4 bloques cortos:
+- ticket seleccionado
+- por qué es el más crítico
+- impacto operativo
+- acción inmediata recomendada
+
+No uses etiquetas rígidas como "Número del ticket:" o "Motivo de criticidad:".
+No inventes datos. Usa solo la información provista.
+
+%s
+""".formatted(safe.toPrettyString()), 0.2, 220);
+
+                return build(summary, "GET_CRITICAL_INCIDENT", true, sessionId, start, 0.95);
+            }
+
+            if ((normalizedMessage.contains("atender primero")
+                    || normalizedMessage.contains("prioriza")
+                    || normalizedMessage.contains("priorizar")
+                    || normalizedMessage.contains("qué atiendo primero")
+                    || normalizedMessage.contains("que atiendo primero")
+                    || normalizedMessage.contains("cual deberia atender primero")
+                    || normalizedMessage.contains("cuál debería atender primero"))
+                    && !visibleIncidents.isEmpty()) {
+
+                com.fasterxml.jackson.databind.JsonNode criticalIncident = null;
+                int bestScore = Integer.MIN_VALUE;
+
+                for (var incident : visibleIncidents) {
+                    int score = 0;
+
+                    String priority = incident.path("priority").asText("");
+                    String urgency = incident.path("urgency").asText("");
+                    String impact = incident.path("impact").asText("");
+                    String state = incident.path("state").asText("");
+                    String text = (incident.path("short_description").asText("")
+                            + " "
+                            + incident.path("description").asText("")).toLowerCase();
+
+                    if ("1".equals(priority) || "critical".equalsIgnoreCase(priority)) score += 50;
+                    else if ("2".equals(priority) || "high".equalsIgnoreCase(priority)) score += 40;
+                    else if ("3".equals(priority) || "moderate".equalsIgnoreCase(priority)) score += 25;
+                    else if ("4".equals(priority) || "low".equalsIgnoreCase(priority)) score += 10;
+
+                    if ("1".equals(urgency) || "high".equalsIgnoreCase(urgency)) score += 25;
+                    else if ("2".equals(urgency) || "medium".equalsIgnoreCase(urgency)) score += 15;
+                    else if ("3".equals(urgency) || "low".equalsIgnoreCase(urgency)) score += 5;
+
+                    if ("1".equals(impact) || "high".equalsIgnoreCase(impact)) score += 25;
+                    else if ("2".equals(impact) || "medium".equalsIgnoreCase(impact)) score += 15;
+                    else if ("3".equals(impact) || "low".equalsIgnoreCase(impact)) score += 5;
+
+                    if ("2".equals(state) || "In Progress".equalsIgnoreCase(state)) score += 8;
+                    if ("1".equals(state) || "New".equalsIgnoreCase(state)) score += 5;
+
+                    if (text.contains("pago") || text.contains("payment")) score += 20;
+                    if (text.contains("auth") || text.contains("autentic")) score += 20;
+                    if (text.contains("producción") || text.contains("produccion")) score += 15;
+                    if (text.contains("inventario")) score += 10;
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        criticalIncident = incident;
+                    }
+                }
+
+                if (criticalIncident != null) {
+                    var safe = policyService.applyPolicy(criticalIncident, request.getUserContext());
+                    String priorityAnswer = llm.generate("""
+Responde de forma natural y concreta cuál incidente debería atenderse primero, usando los incidentes visibles.
+Habla como un advisor operativo.
+Máximo 5 líneas.
+Menciona el ticket recomendado, la razón principal y la acción inmediata.
+No des una respuesta genérica ni una lista de criterios abstractos.
+
+%s
+""".formatted(safe.toPrettyString()), 0.2, 180);
+
+                    return build(priorityAnswer, "PRIORITIZE", true, sessionId, start, 0.95);
+                }
+            }
+
+            if ((normalizedMessage.contains("resume")
+                    || normalizedMessage.contains("resumen")
+                    || normalizedMessage.contains("lenguaje ejecutivo")
+                    || normalizedMessage.contains("executive"))
+                    && (normalizedMessage.contains("incidentes")
+                            || normalizedMessage.contains("tickets"))
+                    && !ticketMatcher.find()) {
+
+                if (visibleIncidents.isEmpty()) {
+                    return build(
+                            "No encontré incidentes visibles para resumir en este momento.",
+                            "SUMMARY_OPEN_INCIDENTS",
+                            true,
+                            sessionId,
+                            start,
+                            0.95);
+                }
+
+                com.fasterxml.jackson.databind.node.ArrayNode openIncidents = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                        .arrayNode();
+
+                for (var incident : visibleIncidents) {
+                    String stateRaw = incident.path("state").asText("");
+                    if ("1".equals(stateRaw) || "2".equals(stateRaw) || "3".equals(stateRaw)
+                            || "New".equalsIgnoreCase(stateRaw)
+                            || "In Progress".equalsIgnoreCase(stateRaw)
+                            || "On Hold".equalsIgnoreCase(stateRaw)) {
+                        openIncidents.add(incident);
+                    }
+                }
+
+                if (openIncidents.isEmpty()) {
+                    return build(
+                            "No tienes incidentes abiertos para resumir en este momento.",
+                            "SUMMARY_OPEN_INCIDENTS",
+                            true,
+                            sessionId,
+                            start,
+                            0.95);
+                }
+
+                boolean shortSummaryRequested = normalizedMessage.contains("2 lineas")
+                        || normalizedMessage.contains("dos lineas")
+                        || normalizedMessage.contains("dos líneas")
+                        || normalizedMessage.contains("rápido")
+                        || normalizedMessage.contains("rapido")
+                        || normalizedMessage.contains("breve");
+
+                String summaryPrompt = shortSummaryRequested
+                        ? """
+                        Resume estos incidentes abiertos en exactamente 2 líneas.
+                        Sé ejecutivo, natural y directo.
+                        Menciona solo panorama general + principal foco de riesgo/acción.
+                        No uses títulos ni listas.
+                        
+                        %s
+                        """
+                        : """
+                        Resume estos incidentes abiertos en lenguaje ejecutivo.
+                        Sé breve, profesional y orientado a impacto operativo.
+                        Menciona volumen, estado general, posibles focos de riesgo y siguiente acción sugerida.
+                        No uses títulos rígidos si no aportan valor.
+                        
+                        %s
+                        """;
+
+                String summary = llm.generate(summaryPrompt.formatted(openIncidents.toPrettyString()), 0.2, shortSummaryRequested ? 120 : 220);
+
+                return build(summary, "SUMMARY_OPEN_INCIDENTS", true, sessionId, start, 0.95);
+            }
+
+            // ✅ Casos frecuentes de demo: listar tickets/incidentes abiertos con o sin
+            // petición explícita de conteo
+            boolean asksForOpenList = normalizedMessage.contains("incidentes abiertos")
                     || normalizedMessage.contains("tickets abiertos")
                     || normalizedMessage.contains("incidentes open")
-                    || normalizedMessage.contains("tickets open"))
+                    || normalizedMessage.contains("tickets open")
+                    || normalizedMessage.contains("lista de tickets")
+                    || normalizedMessage.contains("lista de incidentes")
+                    || normalizedMessage.contains("lista rapida de tickets")
+                    || normalizedMessage.contains("listado de tickets")
+                    || normalizedMessage.contains("dame mis tickets")
+                    || normalizedMessage.contains("dame mis incidentes");
+
+            boolean asksForCount = normalizedMessage.contains("cuantos")
+                    || normalizedMessage.contains("cuántos")
+                    || normalizedMessage.contains("numero total")
+                    || normalizedMessage.contains("número total")
+                    || normalizedMessage.contains("total");
+
+            if ((asksForOpenList
+                    || (asksForCount && (normalizedMessage.contains("ticket") || normalizedMessage.contains("incidente"))))
                     && !ticketMatcher.find()) {
 
                 if (visibleIncidents.isEmpty()) {
@@ -168,12 +401,11 @@ public class AgentOrchestrator {
                             true,
                             sessionId,
                             start,
-                            0.95
-                    );
+                            0.95);
                 }
 
-                com.fasterxml.jackson.databind.node.ArrayNode openIncidents =
-                        com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+                com.fasterxml.jackson.databind.node.ArrayNode openIncidents = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                        .arrayNode();
 
                 for (var incident : visibleIncidents) {
                     String stateRaw = incident.path("state").asText("");
@@ -192,8 +424,7 @@ public class AgentOrchestrator {
                             true,
                             sessionId,
                             start,
-                            0.95
-                    );
+                            0.95);
                 }
 
                 String rendered = renderer.renderIncidentList(openIncidents, Math.min(openIncidents.size(), 5));
@@ -218,8 +449,7 @@ public class AgentOrchestrator {
                         query.setMetric("count");
                     }
 
-                    Map<String, Object> data =
-                            analyticsService.execute(query);
+                    Map<String, Object> data = analyticsService.execute(query);
 
                     if (data == null) {
                         data = Map.of("count", 0);
@@ -242,8 +472,7 @@ public class AgentOrchestrator {
                             true,
                             sessionId,
                             start,
-                            confidence
-                    );
+                            confidence);
 
                 } catch (Exception ex) {
                     log.error("Error ejecutando ANALYTICS_QUERY", ex);
@@ -254,8 +483,7 @@ public class AgentOrchestrator {
                             false,
                             sessionId,
                             start,
-                            0.6
-                    );
+                            0.6);
                 }
             }
 
@@ -267,8 +495,7 @@ public class AgentOrchestrator {
                 fallbackQuery.setDateRange("until_now");
                 fallbackQuery.setOutputMode("summary");
 
-                Map<String, Object> data =
-                        analyticsService.execute(fallbackQuery);
+                Map<String, Object> data = analyticsService.execute(fallbackQuery);
 
                 String natural = data.containsKey("count")
                         ? "Se encontraron " + data.get("count") + " tickets."
@@ -280,16 +507,14 @@ public class AgentOrchestrator {
                         true,
                         sessionId,
                         start,
-                        0.9
-                );
+                        0.9);
             }
 
             // ✅ Consulta de ticket específico
             if ("GET_INCIDENT".equalsIgnoreCase(plan.getIntent())
                     && plan.getIncidentNumber() != null) {
 
-                var result =
-                        serviceNowClient.getIncidentByNumber(plan.getIncidentNumber());
+                var result = serviceNowClient.getIncidentByNumber(plan.getIncidentNumber());
 
                 if (!result.has("result")
                         || result.get("result").isEmpty()) {
@@ -300,8 +525,7 @@ public class AgentOrchestrator {
                             false,
                             sessionId,
                             start,
-                            0.8
-                    );
+                            0.8);
                 }
 
                 var incident = result.get("result").get(0);
@@ -311,11 +535,11 @@ public class AgentOrchestrator {
                         || "short".equalsIgnoreCase(plan.getSummaryType())) {
 
                     String summary = llm.generate("""
-Resume este ticket en lenguaje claro y profesional.
-Máximo 5 líneas.
+                            Resume este ticket en lenguaje claro y profesional.
+                            Máximo 5 líneas.
 
-%s
-""".formatted(safe.toPrettyString()), 0.2, 150);
+                            %s
+                            """.formatted(safe.toPrettyString()), 0.2, 150);
 
                     return build(summary, "SUMMARY", true, sessionId, start, confidence);
                 }
@@ -327,9 +551,9 @@ Máximo 5 líneas.
 
             // ✅ Fallback conversacional
             String reply = llm.agentChat("""
-Eres AideBot, asistente profesional de soporte TI.
-Responde claro y útil.
-""", message);
+                    Eres AideBot, asistente profesional de soporte TI.
+                    Responde claro y útil.
+                    """, message);
 
             return build(reply, "CHAT", true, sessionId, start, confidence);
 
@@ -341,13 +565,14 @@ Responde claro y útil.
                     false,
                     sessionId,
                     start,
-                    0.3
-            );
+                    0.3);
         }
     }
 
-    private List<com.fasterxml.jackson.databind.JsonNode> resolveVisibleIncidents(String sessionId, AgentRequest request) {
-        List<com.fasterxml.jackson.databind.JsonNode> incidentsFromRequest = extractIncidentsFromMetadata(request.getMetadata());
+    private List<com.fasterxml.jackson.databind.JsonNode> resolveVisibleIncidents(String sessionId,
+            AgentRequest request) {
+        List<com.fasterxml.jackson.databind.JsonNode> incidentsFromRequest = extractIncidentsFromMetadata(
+                request.getMetadata());
 
         if (!incidentsFromRequest.isEmpty()) {
             memory.setSessionValue(sessionId, "visible_incidents", incidentsFromRequest);
@@ -369,7 +594,8 @@ Responde claro y útil.
 
         List<com.fasterxml.jackson.databind.JsonNode> incidentsFromServiceNow = new ArrayList<>();
         var result = serviceNowClient.getAllIncidents(null, null, null, 10000, 0);
-        if (result != null && result.has("result") && result.get("result").isArray() && !result.get("result").isEmpty()) {
+        if (result != null && result.has("result") && result.get("result").isArray()
+                && !result.get("result").isEmpty()) {
             result.get("result").forEach(incidentsFromServiceNow::add);
         }
 
@@ -421,8 +647,6 @@ Responde claro y útil.
                 System.currentTimeMillis() - start,
                 Map.of(
                         "mode", "ai_orchestrated",
-                        "confidence", confidence
-                )
-        );
+                        "confidence", confidence));
     }
 }

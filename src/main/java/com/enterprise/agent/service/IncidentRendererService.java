@@ -146,11 +146,26 @@ Fecha de creación: %s
             return "No se encontraron incidentes para mostrar.";
         }
 
-        StringBuilder builder = new StringBuilder("Incidentes abiertos encontrados:\n");
+        int total = incidentsNode.size();
         int count = 0;
+        int limit = Math.min(total, maxItems);
+
+        StringBuilder builder = new StringBuilder()
+                .append("Hay ")
+                .append(total)
+                .append(total == 1 ? " ticket abierto." : " tickets abiertos.")
+                .append("\n");
+
+        if (total > limit) {
+            builder.append("Mostrando los ")
+                    .append(limit)
+                    .append(" más relevantes:\n");
+        } else {
+            builder.append("Lista rápida:\n");
+        }
 
         for (JsonNode incident : incidentsNode) {
-            if (count >= maxItems) {
+            if (count >= limit) {
                 break;
             }
 
