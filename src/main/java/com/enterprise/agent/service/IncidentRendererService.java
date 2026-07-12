@@ -141,6 +141,40 @@ Fecha de creación: %s
 """.formatted(number, description, state, priority, assigned, created);
     }
 
+    public String renderIncidentList(JsonNode incidentsNode, int maxItems) {
+        if (incidentsNode == null || !incidentsNode.isArray() || incidentsNode.isEmpty()) {
+            return "No se encontraron incidentes para mostrar.";
+        }
+
+        StringBuilder builder = new StringBuilder("Incidentes abiertos encontrados:\n");
+        int count = 0;
+
+        for (JsonNode incident : incidentsNode) {
+            if (count >= maxItems) {
+                break;
+            }
+
+            String number = extractDisplayValue(incident, "number");
+            String description = extractDisplayValue(incident, "short_description");
+            String state = extractDisplayValue(incident, "state");
+            String priority = extractDisplayValue(incident, "priority");
+
+            builder.append("- ")
+                    .append(number)
+                    .append(" | ")
+                    .append(description)
+                    .append(" | Estado: ")
+                    .append(state)
+                    .append(" | Prioridad: ")
+                    .append(priority)
+                    .append("\n");
+
+            count++;
+        }
+
+        return builder.toString().trim();
+    }
+
     private String extractDisplayValue(JsonNode node, String field) {
 
         if (node == null || !node.has(field)) {

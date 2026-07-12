@@ -7,6 +7,7 @@ import type {
 } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const VISIBLE_INCIDENTS_STORAGE_KEY = 'ea.visibleIncidents';
 
 class ApiError extends Error {
   constructor(
@@ -92,6 +93,11 @@ export const agentApi = {
         ? localStorage.getItem('user_id') || 'web-ui-dev-user'
         : 'web-ui-dev-user';
 
+    const visibleIncidents =
+      typeof window !== 'undefined'
+        ? JSON.parse(localStorage.getItem(VISIBLE_INCIDENTS_STORAGE_KEY) || '[]')
+        : [];
+
     const payload = {
       message: request.message,
       sessionId,
@@ -101,6 +107,10 @@ export const agentApi = {
         email: `${userId}@local`,
         fullName: userId,
         roles: ['user', 'analyst'],
+      },
+      context: {
+        ...((request as any)?.context || {}),
+        visibleIncidents,
       },
     };
 
@@ -163,9 +173,18 @@ export const incidentsApi = {
     if (params?.offset) queryParams.append('offset', params.offset.toString());
 
     const query = queryParams.toString();
-    return fetchApi<ApiResponse<Incident[]>>(
+    const response = await fetchApi<ApiResponse<Incident[]>>(
       `/api/incidents${query ? `?${query}` : ''}`
     );
+
+    if (typeof window !== 'undefined' && Array.isArray(response?.data)) {
+      localStorage.setItem(
+        VISIBLE_INCIDENTS_STORAGE_KEY,
+        JSON.stringify(response.data)
+      );
+    }
+
+    return response;
   },
 
   async getById(id: string): Promise<ApiResponse<Incident>> {

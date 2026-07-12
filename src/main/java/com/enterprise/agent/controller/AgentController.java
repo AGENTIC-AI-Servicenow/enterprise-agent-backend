@@ -46,6 +46,7 @@ public class AgentController {
         private String message;           // Mensaje del usuario
         private String sessionId;         // ID de sesión conversacional
         private UserInfo user;            // Información del usuario autenticado
+        private Map<String, Object> context; // Contexto conversacional/frontend
         
         @Data
         public static class UserInfo {
@@ -175,7 +176,11 @@ public class AgentController {
             agentRequest.setMessage(request.getMessage());
             agentRequest.setSessionId(sessionId);
             agentRequest.setUserContext(userContext);
-            agentRequest.setMetadata(new HashMap<>());
+            Map<String, Object> metadata = new HashMap<>();
+            if (request.getContext() != null) {
+                metadata.putAll(request.getContext());
+            }
+            agentRequest.setMetadata(metadata);
             
             // 5️⃣ Delegar al AgentOrchestrator
             AgentOrchestrator.AgentResponse result = orchestrator.process(agentRequest);

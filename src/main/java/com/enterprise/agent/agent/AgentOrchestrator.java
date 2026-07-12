@@ -15,6 +15,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -149,6 +151,55 @@ public class AgentOrchestrator {
                 return build(rendered, "GET_INCIDENT", true, sessionId, start, 0.95);
             }
 
+            List<com.fasterxml.jackson.databind.JsonNode> visibleIncidents = resolveVisibleIncidents(sessionId, request);
+
+            // ✅ Casos frecuentes de demo: "mis incidentes abiertos" / "mis tickets abiertos"
+            String normalizedMessage = message.toLowerCase();
+            if ((normalizedMessage.contains("incidentes abiertos")
+                    || normalizedMessage.contains("tickets abiertos")
+                    || normalizedMessage.contains("incidentes open")
+                    || normalizedMessage.contains("tickets open"))
+                    && !ticketMatcher.find()) {
+
+                if (visibleIncidents.isEmpty()) {
+                    return build(
+                            "No encontré incidentes visibles en este momento.",
+                            "LIST_OPEN_INCIDENTS",
+                            true,
+                            sessionId,
+                            start,
+                            0.95
+                    );
+                }
+
+                com.fasterxml.jackson.databind.node.ArrayNode openIncidents =
+                        com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+
+                for (var incident : visibleIncidents) {
+                    String stateRaw = incident.path("state").asText("");
+                    if ("1".equals(stateRaw) || "2".equals(stateRaw) || "3".equals(stateRaw)
+                            || "New".equalsIgnoreCase(stateRaw)
+                            || "In Progress".equalsIgnoreCase(stateRaw)
+                            || "On Hold".equalsIgnoreCase(stateRaw)) {
+                        openIncidents.add(incident);
+                    }
+                }
+
+                if (openIncidents.isEmpty()) {
+                    return build(
+                            "No tienes incidentes abiertos en este momento.",
+                            "LIST_OPEN_INCIDENTS",
+                            true,
+                            sessionId,
+                            start,
+                            0.95
+                    );
+                }
+
+                String rendered = renderer.renderIncidentList(openIncidents, Math.min(openIncidents.size(), 5));
+                return build(rendered, "LIST_OPEN_INCIDENTS", true, sessionId, start, 0.95);
+            }
+
             // ✅ ANALYTICS_QUERY → ejecutamos herramienta dinámica
             if ("ANALYTICS_QUERY".equalsIgnoreCase(plan.getIntent())) {
 
@@ -174,14 +225,16 @@ public class AgentOrchestrator {
                         data = Map.of("count", 0);
                     }
 
-                    String natural = llm.generate("""
-Eres un asistente analítico de soporte TI.
-NO des instrucciones externas.
-Responde SOLO con los datos obtenidos.
-
-Datos:
-%s
-""".formatted(data.toString()), 0.2, 200);
+                    String natural;
+                    if (data.containsKey("count")) {
+                        natural = "Se encontraron " + data.get("count") + " incidentes para esa consulta.";
+                    } else if (data.containsKey("list")) {
+                        natural = "Resultados obtenidos: " + data.get("list");
+                    } else if (data.containsKey("grouped")) {
+                        natural = "Distribución encontrada: " + data.get("grouped");
+                    } else {
+                        natural = "No encontré datos para esa consulta.";
+                    }
 
                     return build(
                             natural,
@@ -217,13 +270,9 @@ Datos:
                 Map<String, Object> data =
                         analyticsService.execute(fallbackQuery);
 
-                String natural = llm.generate("""
-Eres un asistente de soporte TI.
-Responde con los datos reales, no con instrucciones externas.
-
-Datos:
-%s
-""".formatted(data.toString()), 0.2, 200);
+                String natural = data.containsKey("count")
+                        ? "Se encontraron " + data.get("count") + " tickets."
+                        : "No encontré datos para esa consulta.";
 
                 return build(
                         natural,
@@ -295,6 +344,65 @@ Responde claro y útil.
                     0.3
             );
         }
+    }
+
+    private List<com.fasterxml.jackson.databind.JsonNode> resolveVisibleIncidents(String sessionId, AgentRequest request) {
+        List<com.fasterxml.jackson.databind.JsonNode> incidentsFromRequest = extractIncidentsFromMetadata(request.getMetadata());
+
+        if (!incidentsFromRequest.isEmpty()) {
+            memory.setSessionValue(sessionId, "visible_incidents", incidentsFromRequest);
+            return incidentsFromRequest;
+        }
+
+        Object cached = memory.getSessionValue(sessionId, "visible_incidents");
+        if (cached instanceof List<?> cachedList && !cachedList.isEmpty()) {
+            List<com.fasterxml.jackson.databind.JsonNode> restored = new ArrayList<>();
+            for (Object item : cachedList) {
+                if (item instanceof com.fasterxml.jackson.databind.JsonNode node) {
+                    restored.add(node);
+                }
+            }
+            if (!restored.isEmpty()) {
+                return restored;
+            }
+        }
+
+        List<com.fasterxml.jackson.databind.JsonNode> incidentsFromServiceNow = new ArrayList<>();
+        var result = serviceNowClient.getAllIncidents(null, null, null, 10000, 0);
+        if (result != null && result.has("result") && result.get("result").isArray() && !result.get("result").isEmpty()) {
+            result.get("result").forEach(incidentsFromServiceNow::add);
+        }
+
+        if (!incidentsFromServiceNow.isEmpty()) {
+            memory.setSessionValue(sessionId, "visible_incidents", incidentsFromServiceNow);
+        }
+
+        return incidentsFromServiceNow;
+    }
+
+    private List<com.fasterxml.jackson.databind.JsonNode> extractIncidentsFromMetadata(Map<String, Object> metadata) {
+        List<com.fasterxml.jackson.databind.JsonNode> incidents = new ArrayList<>();
+
+        if (metadata == null) {
+            return incidents;
+        }
+
+        Object visibleIncidents = metadata.get("visibleIncidents");
+        if (!(visibleIncidents instanceof List<?> items)) {
+            return incidents;
+        }
+
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
+        for (Object item : items) {
+            if (item instanceof com.fasterxml.jackson.databind.JsonNode node) {
+                incidents.add(node);
+            } else {
+                incidents.add(mapper.valueToTree(item));
+            }
+        }
+
+        return incidents;
     }
 
     private AgentResponse build(

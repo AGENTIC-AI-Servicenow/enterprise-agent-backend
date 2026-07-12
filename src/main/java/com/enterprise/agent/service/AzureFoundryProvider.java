@@ -34,6 +34,9 @@ public class AzureFoundryProvider implements LLMProvider {
     @Value("${llm.azure.api-version:2024-12-01-preview}")
     private String apiVersion;
 
+    @Value("${llm.azure.use-responses-api:false}")
+    private boolean useResponsesApi;
+
     /**
      * IMPORTANT:
      * We intentionally create a "clean" WebClient here (without app-wide filters).
@@ -64,6 +67,63 @@ public class AzureFoundryProvider implements LLMProvider {
                 "Azure Foundry API key not configured. Set AZURE_OPENAI_KEY env var.");
         }
 
+        JsonNode response;
+
+        if (useResponsesApi) {
+            Map<String, Object> body = Map.of(
+                    "model", deployment,
+                    "input", List.of(
+                            Map.of("role", "system", "content", List.of(
+                                    Map.of("type", "input_text", "text", "Eres un asistente empresarial.")
+                            )),
+                            Map.of("role", "user", "content", List.of(
+                                    Map.of("type", "input_text", "text", prompt)
+                            ))
+                    ),
+                    "temperature", temperature,
+                    "max_output_tokens", maxTokens
+            );
+
+            response = webClient.post()
+                    .uri(endpoint)
+                    .header("api-key", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            if (response == null) {
+                return "No se pudo generar respuesta del modelo Azure.";
+            }
+
+            if (response.has("output_text")) {
+                return response.get("output_text").asText().trim();
+            }
+
+            if (response.has("output") && response.get("output").isArray()) {
+                StringBuilder text = new StringBuilder();
+                for (JsonNode item : response.get("output")) {
+                    JsonNode content = item.get("content");
+                    if (content != null && content.isArray()) {
+                        for (JsonNode part : content) {
+                            if (part.has("text")) {
+                                if (!text.isEmpty()) {
+                                    text.append("\n");
+                                }
+                                text.append(part.get("text").asText());
+                            }
+                        }
+                    }
+                }
+                if (!text.isEmpty()) {
+                    return text.toString().trim();
+                }
+            }
+
+            return "No se pudo interpretar la respuesta del modelo Azure.";
+        }
+
         Map<String, Object> body = Map.of(
                 "messages", List.of(
                         Map.of("role", "system", "content", "Eres un asistente empresarial."),
@@ -77,7 +137,7 @@ public class AzureFoundryProvider implements LLMProvider {
                 "/openai/deployments/" + deployment +
                 "/chat/completions?api-version=" + apiVersion;
 
-        JsonNode response = webClient.post()
+        response = webClient.post()
                 .uri(uri)
                 .header("api-key", apiKey)
                 .contentType(MediaType.APPLICATION_JSON)
