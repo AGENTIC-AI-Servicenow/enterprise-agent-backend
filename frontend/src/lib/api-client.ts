@@ -1,9 +1,10 @@
-import type { 
-  AgentRequest, 
-  AgentResponse, 
-  Incident, 
+import type {
+  AgentRequest,
+  AgentResponse,
+  Incident,
   IncidentSummary,
-  ApiResponse 
+  BriefingResponse,
+  ApiResponse
 } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
@@ -152,6 +153,11 @@ export const agentApi = {
 
   async getConversationHistory(conversationId: string) {
     return fetchApi(`/api/agent/conversations/${conversationId}`);
+  },
+
+  async getBriefing(technician?: string): Promise<ApiResponse<BriefingResponse>> {
+    const query = technician ? `?technician=${encodeURIComponent(technician)}` : '';
+    return fetchApi<ApiResponse<BriefingResponse>>(`/api/agent/briefing${query}`);
   },
 };
 

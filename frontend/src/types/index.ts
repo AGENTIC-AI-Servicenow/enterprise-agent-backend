@@ -37,6 +37,43 @@ export interface IncidentSummary {
   openIncidents: number;
 }
 
+export interface BriefingTicket {
+  number: string;
+  shortDescription: string;
+  state: string;
+  priority: string;
+  ageHours: number;
+  daysWithoutUpdate: number;
+  daysSinceClosed: number;
+  slaRisk: boolean;
+  complianceWindow: boolean;
+  reason: string;
+  suggestedAction: string;
+  riskRank: number;
+  topic: string;
+}
+
+export interface BriefingMetrics {
+  openTickets: number;
+  slaRiskTickets: number;
+  stalledTickets: number;
+  pendingComplianceTickets: number;
+}
+
+export interface BriefingContext {
+  technician: string;
+  generatedAt: string;
+  metrics: BriefingMetrics;
+  attentionToday: BriefingTicket[];
+  complianceWatch: BriefingTicket[];
+  patterns: string[];
+}
+
+export interface BriefingResponse {
+  summary: string;
+  context: BriefingContext;
+}
+
 // ============================================================================
 // AI AGENT TYPES
 // ============================================================================

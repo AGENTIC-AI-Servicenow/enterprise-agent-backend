@@ -11,10 +11,10 @@ import {
   Textarea,
 } from "@/components/ui";
 import { useAgent } from "@/hooks/use-agent";
+import { agentApi } from "@/lib/api-client";
+import type { BriefingResponse, Incident } from "@/types";
 import {
   Send,
-  Bot,
-  User,
   Loader2,
   Clock3,
   PanelTop,
@@ -23,14 +23,145 @@ import {
   Paperclip,
   Globe,
   Mic,
-  Wand2,
   Eye,
   Lightbulb,
   ChevronRight,
   Search,
   Plus,
+  CalendarClock,
+  AlertTriangle,
+  ShieldAlert,
+  CheckCircle2,
 } from "lucide-react";
 import { Fragment, useState, useRef, useEffect, useMemo } from "react";
+
+function buildLocalBriefingFromIncidents(incidents: Incident[]): BriefingResponse {
+  const now = new Date();
+
+  const parseDate = (value?: string) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const diffHours = (value?: string) => {
+    const parsed = parseDate(value);
+    if (!parsed) return 0;
+    return Math.max(0, Math.round((now.getTime() - parsed.getTime()) / (1000 * 60 * 60)));
+  };
+
+  const diffDays = (value?: string) => {
+    const parsed = parseDate(value);
+    if (!parsed) return 0;
+    return Math.max(0, Math.round((now.getTime() - parsed.getTime()) / (1000 * 60 * 60 * 24)));
+  };
+
+  const toPriorityRank = (priority?: string) => {
+    const normalized = String(priority ?? "").toLowerCase();
+    if (normalized === "critical" || normalized === "1") return 1;
+    if (normalized === "high" || normalized === "2") return 2;
+    if (normalized === "medium" || normalized === "3") return 3;
+    return 4;
+  };
+
+  const normalizedOpen = incidents.filter((incident) =>
+    ["new", "in progress", "on hold", "1", "2", "3"].includes(
+      String(incident.state ?? "").toLowerCase()
+    )
+  );
+
+  const briefingTickets = normalizedOpen
+    .map((incident) => {
+      const ageHours = diffHours(incident.opened_at);
+      const daysWithoutUpdate = diffDays(incident.updated_at);
+      const daysSinceClosed = diffDays(incident.closed_at);
+      const priorityRank = toPriorityRank(incident.priority);
+      const slaRisk = priorityRank <= 2 || ageHours >= 24 || daysWithoutUpdate >= 2;
+      const complianceWindow = daysWithoutUpdate >= 3;
+      const topic =
+        /pago|payment/i.test(
+          `${incident.short_description ?? ""} ${incident.description ?? ""}`
+        )
+          ? "Pagos"
+          : /auth|autentic|acceso|permission/i.test(
+                `${incident.short_description ?? ""} ${incident.description ?? ""}`
+              )
+            ? "Acceso"
+            : /inventario|stock/i.test(
+                  `${incident.short_description ?? ""} ${incident.description ?? ""}`
+                )
+              ? "Inventario"
+              : "Operación";
+
+      const reasons = [];
+      if (priorityRank === 1) reasons.push("prioridad crítica");
+      if (priorityRank === 2) reasons.push("prioridad alta");
+      if (ageHours >= 24) reasons.push(`${ageHours}h abierto`);
+      if (daysWithoutUpdate >= 2) reasons.push(`${daysWithoutUpdate} día(s) sin actualización`);
+      if (slaRisk) reasons.push("riesgo de ANS");
+
+      const riskRank =
+        (priorityRank === 1 ? 100 : priorityRank === 2 ? 80 : priorityRank === 3 ? 55 : 30) +
+        Math.min(ageHours, 48) +
+        daysWithoutUpdate * 10;
+
+      return {
+        number: incident.number,
+        shortDescription: incident.short_description,
+        state: incident.state,
+        priority: incident.priority,
+        ageHours,
+        daysWithoutUpdate,
+        daysSinceClosed,
+        slaRisk,
+        complianceWindow,
+        reason: reasons.join(" · ") || "requiere revisión",
+        suggestedAction:
+          priorityRank <= 2
+            ? "Validar impacto, comunicar estado y acelerar resolución"
+            : "Confirmar bloqueo real y definir siguiente actualización",
+        riskRank,
+        topic,
+      };
+    })
+    .sort((a, b) => b.riskRank - a.riskRank);
+
+  const attentionToday = briefingTickets.slice(0, 3);
+  const complianceWatch = briefingTickets
+    .filter((ticket) => ticket.complianceWindow || ticket.daysWithoutUpdate >= 3)
+    .slice(0, 3);
+
+  const topicCounts = briefingTickets.reduce<Record<string, number>>((acc, ticket) => {
+    acc[ticket.topic] = (acc[ticket.topic] || 0) + 1;
+    return acc;
+  }, {});
+
+  const patterns = Object.entries(topicCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([topic, count]) => `${topic} aparece en ${count} incidente(s)`);
+
+  const summary = attentionToday.length
+    ? `Detecté ${normalizedOpen.length} ticket(s) abiertos en tu contexto visible. Prioriza ${attentionToday[0].number} porque combina ${attentionToday[0].reason}. Además, ${briefingTickets.filter((ticket) => ticket.slaRisk).length} caso(s) muestran riesgo de ANS y ${briefingTickets.filter((ticket) => ticket.daysWithoutUpdate >= 2).length} llevan tiempo sin actualización.`
+    : "No detecté incidentes abiertos suficientes en el contexto local para generar un briefing priorizado.";
+
+  return {
+    summary,
+    context: {
+      technician: "local-visible-context",
+      generatedAt: now.toISOString(),
+      metrics: {
+        openTickets: normalizedOpen.length,
+        slaRiskTickets: briefingTickets.filter((ticket) => ticket.slaRisk).length,
+        stalledTickets: briefingTickets.filter((ticket) => ticket.daysWithoutUpdate >= 2).length,
+        pendingComplianceTickets: complianceWatch.length,
+      },
+      attentionToday,
+      complianceWatch,
+      patterns: patterns.length ? patterns : ["briefing construido desde incidentes visibles locales"],
+    },
+  };
+}
 
 function renderRichMessage(content: string) {
   const blocks = content
@@ -81,7 +212,7 @@ function renderRichMessage(content: string) {
           const cleanLine = line.replace(/^#+\s*/, "");
           const isHeading =
             cleanLine.endsWith(":") ||
-            /^(resumen ejecutivo|estado general|principales focos de riesgo|siguiente acción sugerida|key takeaways|focos de riesgo principales)/i.test(
+            /^(resumen ejecutivo|estado general|principales focos de riesgo|siguiente acción sugerida|key takeaways|focos de riesgo principales|atención hoy|detecté)/i.test(
               cleanLine
             );
 
@@ -114,9 +245,14 @@ export default function AgentPage() {
   const { sendMessage, isLoading, messages: agentMessages } = useAgent();
   const [input, setInput] = useState("");
   const [visibleIncidents, setVisibleIncidents] = useState<any[]>([]);
+  const [briefing, setBriefing] = useState<BriefingResponse | null>(null);
+  const [isBriefingLoading, setIsBriefingLoading] = useState(true);
+  const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [briefingMode, setBriefingMode] = useState<"remote" | "local-fallback">("remote");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const suggestionPills = [
+    "Dame el briefing diario",
     "Resume mis incidentes abiertos en lenguaje ejecutivo",
     "¿Cuál debería atender primero y por qué?",
     "Dame el detalle del ticket más crítico",
@@ -224,7 +360,9 @@ export default function AgentPage() {
     const topTheme = dominantThemes[0];
 
     const recommendation = topIncident
-      ? `Prioriza ${topIncident?.number ?? "el incidente principal"} porque concentra el mayor riesgo operativo actual${topTheme ? ` y el patrón dominante está en ${topTheme.label.toLowerCase()}` : ""}.`
+      ? `Prioriza ${topIncident?.number ?? "el incidente principal"} porque concentra el mayor riesgo operativo actual${
+          topTheme ? ` y el patrón dominante está en ${topTheme.label.toLowerCase()}` : ""
+        }.`
       : "Carga incidentes visibles para obtener una recomendación priorizada.";
 
     return {
@@ -261,6 +399,48 @@ export default function AgentPage() {
     return () => window.removeEventListener("storage", loadVisibleIncidents);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const loadBriefing = async () => {
+      setIsBriefingLoading(true);
+      setBriefingError(null);
+
+      try {
+        const response = await agentApi.getBriefing();
+        if (!active) return;
+
+        if ((response as any)?.degraded && visibleIncidents.length > 0) {
+          setBriefing(buildLocalBriefingFromIncidents(visibleIncidents as Incident[]));
+          setBriefingMode("local-fallback");
+        } else {
+          setBriefing(response.data ?? null);
+          setBriefingMode("remote");
+        }
+      } catch (error: any) {
+        if (!active) return;
+
+        if (visibleIncidents.length > 0) {
+          setBriefing(buildLocalBriefingFromIncidents(visibleIncidents as Incident[]));
+          setBriefingMode("local-fallback");
+          setBriefingError(null);
+        } else {
+          setBriefingError(error?.message || "No se pudo cargar el briefing.");
+        }
+      } finally {
+        if (active) {
+          setIsBriefingLoading(false);
+        }
+      }
+    };
+
+    loadBriefing();
+
+    return () => {
+      active = false;
+    };
+  }, [visibleIncidents]);
+
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
     const message = input;
@@ -272,6 +452,32 @@ export default function AgentPage() {
     if (isLoading) return;
     setInput("");
     sendMessage(message);
+  };
+
+  const refreshBriefing = async () => {
+    setIsBriefingLoading(true);
+    setBriefingError(null);
+
+    try {
+      const response = await agentApi.getBriefing();
+      if ((response as any)?.degraded && visibleIncidents.length > 0) {
+        setBriefing(buildLocalBriefingFromIncidents(visibleIncidents as Incident[]));
+        setBriefingMode("local-fallback");
+      } else {
+        setBriefing(response.data ?? null);
+        setBriefingMode("remote");
+      }
+    } catch (error: any) {
+      if (visibleIncidents.length > 0) {
+        setBriefing(buildLocalBriefingFromIncidents(visibleIncidents as Incident[]));
+        setBriefingMode("local-fallback");
+        setBriefingError(null);
+      } else {
+        setBriefingError(error?.message || "No se pudo actualizar el briefing.");
+      }
+    } finally {
+      setIsBriefingLoading(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -330,7 +536,7 @@ export default function AgentPage() {
                   AideBot Workspace
                 </CardTitle>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Priorización y análisis operativo sobre incidentes visibles
+                  Briefing diario, priorización y análisis operativo sobre incidentes visibles
                 </p>
               </div>
             </div>
@@ -340,6 +546,111 @@ export default function AgentPage() {
             <div className="flex min-h-0 flex-col border-r border-black/5 lg:col-span-2 dark:border-white/10">
               <div className="flex-1 overflow-y-auto px-6 py-6 [scrollbar-width:thin] [scrollbar-color:rgba(15,23,42,0.14)_transparent] [&::-webkit-scrollbar]:w-0.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/60 dark:[scrollbar-color:rgba(148,163,184,0.22)_transparent] dark:[&::-webkit-scrollbar-thumb]:bg-slate-600/40">
                 <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+                  <div className="rounded-[28px] border border-primary/10 bg-gradient-to-br from-primary/[0.07] via-white/80 to-white/60 p-4 shadow-[0_12px_40px_rgba(59,130,246,0.08)] backdrop-blur-sm dark:from-primary/10 dark:via-slate-900/70 dark:to-slate-900/50">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                          <CalendarClock className="h-3.5 w-3.5" />
+                          Briefing diario
+                        </div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <div className="text-base font-semibold text-foreground">
+                            Inicio de jornada asistido
+                          </div>
+                          {briefingMode === "local-fallback" && (
+                            <Badge variant="warning" className="rounded-full text-[10px]">
+                              Local fallback
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={refreshBriefing}
+                        disabled={isBriefingLoading}
+                        className="rounded-full"
+                      >
+                        {isBriefingLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          "Actualizar"
+                        )}
+                      </Button>
+                    </div>
+
+                    {isBriefingLoading ? (
+                      <div className="space-y-3">
+                        <div className="h-3 w-48 animate-pulse rounded-full bg-slate-200/70 dark:bg-slate-700/60" />
+                        <div className="h-3 w-full animate-pulse rounded-full bg-slate-200/60 dark:bg-slate-700/50" />
+                        <div className="h-3 w-[88%] animate-pulse rounded-full bg-slate-200/50 dark:bg-slate-700/40" />
+                      </div>
+                    ) : briefingError ? (
+                      <div className="rounded-2xl border border-rose-200/70 bg-rose-50/80 px-3 py-3 text-[13px] text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+                        {briefingError}
+                      </div>
+                    ) : briefing ? (
+                      <div className="space-y-4">
+                        <div className="rounded-[22px] bg-white/75 px-4 py-4 text-[14px] leading-[1.7] text-foreground/90 ring-1 ring-black/5 dark:bg-slate-900/50 dark:ring-white/10">
+                          {renderRichMessage(briefing.summary)}
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-2xl bg-white/70 px-3 py-3 ring-1 ring-black/5 dark:bg-slate-900/50 dark:ring-white/10">
+                            <div className="text-[11px] text-muted-foreground">Abiertos</div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {briefing.context.metrics.openTickets}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl bg-white/70 px-3 py-3 ring-1 ring-black/5 dark:bg-slate-900/50 dark:ring-white/10">
+                            <div className="text-[11px] text-muted-foreground">Riesgo ANS</div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {briefing.context.metrics.slaRiskTickets}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl bg-white/70 px-3 py-3 ring-1 ring-black/5 dark:bg-slate-900/50 dark:ring-white/10">
+                            <div className="text-[11px] text-muted-foreground">Estancados</div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {briefing.context.metrics.stalledTickets}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl bg-white/70 px-3 py-3 ring-1 ring-black/5 dark:bg-slate-900/50 dark:ring-white/10">
+                            <div className="text-[11px] text-muted-foreground">Conformidad</div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {briefing.context.metrics.pendingComplianceTickets}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="text-[12px] font-medium text-muted-foreground">
+                            Atención hoy
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {briefing.context.attentionToday.length ? (
+                              briefing.context.attentionToday.map((ticket) => (
+                                <button
+                                  key={ticket.number}
+                                  onClick={() => sendShortcut(`Analiza el ticket ${ticket.number}`)}
+                                  className="rounded-full border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-left text-[12px] text-amber-900 transition hover:bg-amber-100 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-100"
+                                >
+                                  <span className="font-semibold">{ticket.number}</span>
+                                  <span className="mx-1 text-amber-700/70 dark:text-amber-200/60">•</span>
+                                  <span>{ticket.reason}</span>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="rounded-2xl border border-dashed border-black/10 px-3 py-3 text-[12px] text-muted-foreground dark:border-white/10">
+                                No se identificaron tickets urgentes para hoy.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
                   {messages.map((message, index) => (
                     <div
                       key={message.id}
@@ -508,7 +819,6 @@ export default function AgentPage() {
                   )}
 
                   <div className="rounded-[28px] border border-primary/20 bg-white px-3 py-3 shadow-[0_12px_40px_rgba(59,130,246,0.10)] ring-1 ring-primary/10 dark:border-primary/20 dark:bg-slate-950">
-
                     <div className="flex gap-3">
                       <Textarea
                         placeholder="Ask AI anything"
@@ -599,6 +909,68 @@ export default function AgentPage() {
 
                   <div className="rounded-[24px] border border-black/5 bg-white/80 p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-slate-900/60">
                     <div className="mb-3 flex items-center justify-between">
+                      <div className="text-sm font-semibold">Briefing operativo</div>
+                      <Badge variant="info" className="rounded-full text-[10px]">
+                        Flujo 1
+                      </Badge>
+                    </div>
+
+                    {briefing ? (
+                      <div className="space-y-3">
+                        <div className="rounded-2xl bg-slate-50 px-3 py-3 dark:bg-white/5">
+                          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                            <ShieldAlert className="h-3.5 w-3.5" />
+                            Riesgo ANS
+                          </div>
+                          <div className="mt-1 text-[13px] font-medium text-foreground">
+                            {briefing.context.metrics.slaRiskTickets} ticket(s) con riesgo de incumplimiento.
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-50 px-3 py-3 dark:bg-white/5">
+                          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Atención hoy
+                          </div>
+                          <div className="mt-2 space-y-2">
+                            {briefing.context.attentionToday.slice(0, 3).map((ticket) => (
+                              <button
+                                key={ticket.number}
+                                onClick={() => sendShortcut(`Analiza el ticket ${ticket.number}`)}
+                                className="w-full rounded-2xl border border-black/5 bg-white px-3 py-2 text-left transition hover:bg-primary/5 dark:border-white/10 dark:bg-slate-900"
+                              >
+                                <div className="text-[12px] font-semibold text-foreground">
+                                  {ticket.number}
+                                </div>
+                                <div className="mt-1 text-[12px] leading-[1.45] text-muted-foreground">
+                                  {ticket.reason}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-50 px-3 py-3 dark:bg-white/5">
+                          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Patrones
+                          </div>
+                          <div className="mt-1 text-[13px] font-medium text-foreground">
+                            {briefing.context.patterns.length
+                              ? briefing.context.patterns.join(" · ")
+                              : "Sin patrones relevantes detectados en la cola actual"}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-black/10 px-3 py-3 text-[12px] text-muted-foreground dark:border-white/10">
+                        Carga el briefing para obtener foco operativo de inicio de jornada.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-[24px] border border-black/5 bg-white/80 p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-slate-900/60">
+                    <div className="mb-3 flex items-center justify-between">
                       <div className="text-sm font-semibold">Dónde intervenir primero</div>
                       <Badge variant="warning" className="rounded-full text-[10px]">
                         Acción
@@ -662,7 +1034,7 @@ export default function AgentPage() {
                           Qué preguntarle al agente
                         </div>
                         <div className="mt-1 text-[13px] font-medium text-foreground">
-                          Pídele impacto ejecutivo, riesgo operativo o plan de acción en vez de solo listar tickets.
+                          Pídele briefing diario, riesgo operativo o plan de acción en vez de solo listar tickets.
                         </div>
                       </div>
                     </div>
