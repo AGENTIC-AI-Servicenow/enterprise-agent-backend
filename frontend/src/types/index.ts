@@ -74,6 +74,35 @@ export interface BriefingResponse {
   context: BriefingContext;
 }
 
+export interface StalledDiagnosis {
+  ticketNumber: string;
+  shortDescription: string;
+  state: string;
+  priority: string;
+  assignedTo: string;
+  caller: string;
+  ageHours: number;
+  daysWithoutUpdate: number;
+  contactAttempts: number;
+  stalled: boolean;
+  holdReason: string;
+  nextAction: string;
+  validationFlags: string[];
+}
+
+export interface StalledDraft {
+  flowId: string;
+  draftVersion: number;
+  approvalState: string;
+  channel: string;
+  content: string;
+}
+
+export interface StalledTicketResponse {
+  diagnosis: StalledDiagnosis;
+  draft: StalledDraft;
+}
+
 // ============================================================================
 // AI AGENT TYPES
 // ============================================================================

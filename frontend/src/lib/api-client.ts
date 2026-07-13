@@ -4,6 +4,7 @@ import type {
   Incident,
   IncidentSummary,
   BriefingResponse,
+  StalledTicketResponse,
   ApiResponse
 } from '@/types';
 
@@ -158,6 +159,12 @@ export const agentApi = {
   async getBriefing(technician?: string): Promise<ApiResponse<BriefingResponse>> {
     const query = technician ? `?technician=${encodeURIComponent(technician)}` : '';
     return fetchApi<ApiResponse<BriefingResponse>>(`/api/agent/briefing${query}`);
+  },
+
+  async getStalledTicket(ticketNumber: string): Promise<ApiResponse<StalledTicketResponse>> {
+    return fetchApi<ApiResponse<StalledTicketResponse>>(
+      `/api/agent/stalled/${encodeURIComponent(ticketNumber)}`
+    );
   },
 };
 

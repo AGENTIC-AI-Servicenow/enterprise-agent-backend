@@ -12,7 +12,7 @@ import {
 } from "@/components/ui";
 import { useAgent } from "@/hooks/use-agent";
 import { agentApi } from "@/lib/api-client";
-import type { BriefingResponse, Incident } from "@/types";
+import type { BriefingResponse, Incident, StalledTicketResponse } from "@/types";
 import {
   Send,
   Loader2,
@@ -76,6 +76,7 @@ function buildLocalBriefingFromIncidents(incidents: Incident[]): BriefingRespons
       const daysWithoutUpdate = diffDays(incident.updated_at);
       const daysSinceClosed = diffDays(incident.closed_at);
       const priorityRank = toPriorityRank(incident.priority);
+      const state = String(incident.state ?? "");
       const slaRisk = priorityRank <= 2 || ageHours >= 24 || daysWithoutUpdate >= 2;
       const complianceWindow = daysWithoutUpdate >= 3;
       const topic =
@@ -96,6 +97,7 @@ function buildLocalBriefingFromIncidents(incidents: Incident[]): BriefingRespons
       const reasons = [];
       if (priorityRank === 1) reasons.push("prioridad crítica");
       if (priorityRank === 2) reasons.push("prioridad alta");
+      if (state === "On Hold") reasons.push("está en espera");
       if (ageHours >= 24) reasons.push(`${ageHours}h abierto`);
       if (daysWithoutUpdate >= 2) reasons.push(`${daysWithoutUpdate} día(s) sin actualización`);
       if (slaRisk) reasons.push("riesgo de ANS");
@@ -103,7 +105,16 @@ function buildLocalBriefingFromIncidents(incidents: Incident[]): BriefingRespons
       const riskRank =
         (priorityRank === 1 ? 100 : priorityRank === 2 ? 80 : priorityRank === 3 ? 55 : 30) +
         Math.min(ageHours, 48) +
-        daysWithoutUpdate * 10;
+        daysWithoutUpdate * 10 +
+        (state === "On Hold" ? 12 : 0);
+
+      const reason =
+        reasons[0] ||
+        (state === "New"
+          ? "recién ingresado, conviene validar ownership"
+          : state === "In Progress"
+            ? "sigue en curso y conviene confirmar siguiente paso"
+            : "requiere seguimiento operativo");
 
       return {
         number: incident.number,
@@ -115,11 +126,13 @@ function buildLocalBriefingFromIncidents(incidents: Incident[]): BriefingRespons
         daysSinceClosed,
         slaRisk,
         complianceWindow,
-        reason: reasons.join(" · ") || "requiere revisión",
+        reason,
         suggestedAction:
           priorityRank <= 2
             ? "Validar impacto, comunicar estado y acelerar resolución"
-            : "Confirmar bloqueo real y definir siguiente actualización",
+            : state === "On Hold"
+              ? "Confirmar bloqueo real y acordar siguiente checkpoint"
+              : "Validar ownership y dejar próxima actualización comprometida",
         riskRank,
         topic,
       };
@@ -141,9 +154,23 @@ function buildLocalBriefingFromIncidents(incidents: Incident[]): BriefingRespons
     .slice(0, 3)
     .map(([topic, count]) => `${topic} aparece en ${count} incidente(s)`);
 
+  const slaRiskCount = briefingTickets.filter((ticket) => ticket.slaRisk).length;
+  const stalledCount = briefingTickets.filter((ticket) => ticket.daysWithoutUpdate >= 2).length;
+  const onHoldCount = briefingTickets.filter((ticket) => ticket.state === "On Hold").length;
+
   const summary = attentionToday.length
-    ? `Detecté ${normalizedOpen.length} ticket(s) abiertos en tu contexto visible. Prioriza ${attentionToday[0].number} porque combina ${attentionToday[0].reason}. Además, ${briefingTickets.filter((ticket) => ticket.slaRisk).length} caso(s) muestran riesgo de ANS y ${briefingTickets.filter((ticket) => ticket.daysWithoutUpdate >= 2).length} llevan tiempo sin actualización.`
-    : "No detecté incidentes abiertos suficientes en el contexto local para generar un briefing priorizado.";
+    ? [
+        `Tienes ${normalizedOpen.length} ticket(s) abiertos en el contexto visible.`,
+        `Te sugiero comenzar por ${attentionToday[0].number} porque ${attentionToday[0].reason}.`,
+        slaRiskCount > 0
+          ? `${slaRiskCount} ticket(s) muestran riesgo de ANS.`
+          : onHoldCount > 0
+            ? `${onHoldCount} ticket(s) están en espera y conviene confirmar el siguiente paso.`
+            : stalledCount > 0
+              ? `${stalledCount} ticket(s) necesitan seguimiento por falta de actualización.`
+              : "No veo alertas críticas inmediatas, pero sí conviene confirmar ownership y próximo paso en la cola."
+      ].join(" ")
+    : "No detecté suficientes incidentes abiertos en el contexto local para construir un briefing útil.";
 
   return {
     summary,
@@ -249,6 +276,9 @@ export default function AgentPage() {
   const [isBriefingLoading, setIsBriefingLoading] = useState(true);
   const [briefingError, setBriefingError] = useState<string | null>(null);
   const [briefingMode, setBriefingMode] = useState<"remote" | "local-fallback">("remote");
+  const [stalledAnalysis, setStalledAnalysis] = useState<StalledTicketResponse | null>(null);
+  const [isStalledLoading, setIsStalledLoading] = useState(false);
+  const [stalledError, setStalledError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const suggestionPills = [
@@ -480,6 +510,20 @@ export default function AgentPage() {
     }
   };
 
+  const runStalledFlow = async (ticketNumber: string) => {
+    setIsStalledLoading(true);
+    setStalledError(null);
+
+    try {
+      const response = await agentApi.getStalledTicket(ticketNumber);
+      setStalledAnalysis(response.data ?? null);
+    } catch (error: any) {
+      setStalledError(error?.message || "No se pudo analizar el ticket estancado.");
+    } finally {
+      setIsStalledLoading(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -632,7 +676,7 @@ export default function AgentPage() {
                               briefing.context.attentionToday.map((ticket) => (
                                 <button
                                   key={ticket.number}
-                                  onClick={() => sendShortcut(`Analiza el ticket ${ticket.number}`)}
+                                  onClick={() => runStalledFlow(ticket.number)}
                                   className="rounded-full border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-left text-[12px] text-amber-900 transition hover:bg-amber-100 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-100"
                                 >
                                   <span className="font-semibold">{ticket.number}</span>
@@ -744,6 +788,105 @@ export default function AgentPage() {
                     </div>
                   )}
 
+                  {(stalledAnalysis || isStalledLoading || stalledError) && (
+                    <div className="rounded-[24px] border border-black/5 bg-white/75 p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)] backdrop-blur-sm dark:border-white/10 dark:bg-slate-900/50">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div>
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            Flujo de destrabe
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-foreground">
+                            Ticket en espera / seguimiento sugerido
+                          </div>
+                        </div>
+                        {stalledAnalysis?.draft?.approvalState && (
+                          <Badge variant="warning" className="rounded-full text-[10px]">
+                            {stalledAnalysis.draft.approvalState}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {isStalledLoading ? (
+                        <div className="space-y-2">
+                          <div className="h-2.5 w-40 animate-pulse rounded-full bg-slate-200/80 dark:bg-slate-700/70" />
+                          <div className="h-2.5 w-full animate-pulse rounded-full bg-slate-200/70 dark:bg-slate-700/60" />
+                          <div className="h-2.5 w-[85%] animate-pulse rounded-full bg-slate-200/60 dark:bg-slate-700/50" />
+                        </div>
+                      ) : stalledError ? (
+                        <div className="rounded-2xl border border-rose-200/70 bg-rose-50/80 px-3 py-3 text-[13px] text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+                          {stalledError}
+                        </div>
+                      ) : stalledAnalysis ? (
+                        <div className="space-y-4">
+                          <div className="grid gap-3 md:grid-cols-4">
+                            <div className="rounded-2xl bg-primary/5 p-3">
+                              <div className="text-[11px] text-muted-foreground">Ticket</div>
+                              <div className="mt-1 text-sm font-semibold">{stalledAnalysis.diagnosis.ticketNumber}</div>
+                            </div>
+                            <div className="rounded-2xl bg-primary/5 p-3">
+                              <div className="text-[11px] text-muted-foreground">Días sin update</div>
+                              <div className="mt-1 text-sm font-semibold">{stalledAnalysis.diagnosis.daysWithoutUpdate}</div>
+                            </div>
+                            <div className="rounded-2xl bg-primary/5 p-3">
+                              <div className="text-[11px] text-muted-foreground">Intentos</div>
+                              <div className="mt-1 text-sm font-semibold">{stalledAnalysis.diagnosis.contactAttempts}</div>
+                            </div>
+                            <div className="rounded-2xl bg-primary/5 p-3">
+                              <div className="text-[11px] text-muted-foreground">Estado</div>
+                              <div className="mt-1 text-sm font-semibold">{stalledAnalysis.diagnosis.state}</div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl bg-slate-50 px-4 py-4 dark:bg-white/5">
+                            <div className="text-[12px] font-semibold text-foreground">Diagnóstico</div>
+                            <div className="mt-2 text-[13px] leading-[1.6] text-foreground/85">
+                              {stalledAnalysis.diagnosis.shortDescription}
+                            </div>
+                            <div className="mt-2 text-[13px] leading-[1.6] text-muted-foreground">
+                              Motivo probable: {stalledAnalysis.diagnosis.holdReason}
+                            </div>
+                            <div className="mt-1 text-[13px] leading-[1.6] text-muted-foreground">
+                              Siguiente acción: {stalledAnalysis.diagnosis.nextAction}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl bg-slate-50 px-4 py-4 dark:bg-white/5">
+                            <div className="text-[12px] font-semibold text-foreground">Validaciones operativas</div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {stalledAnalysis.diagnosis.validationFlags.map((flag) => (
+                                <Badge key={flag} variant="outline" className="rounded-full text-[11px]">
+                                  {flag}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-amber-200/70 bg-amber-50/80 px-4 py-4 dark:border-amber-400/20 dark:bg-amber-500/10">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-[12px] font-semibold text-foreground">Borrador sugerido</div>
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  Flow ID: {stalledAnalysis.draft.flowId} · Canal: {stalledAnalysis.draft.channel}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button size="sm" variant="outline" className="rounded-full">
+                                  Editar
+                                </Button>
+                                <Button size="sm" className="rounded-full">
+                                  Aprobar
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="mt-3 text-[13px] leading-[1.7] text-foreground/90">
+                              {stalledAnalysis.draft.content}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
                   {lastAssistantMessage && !isLoading && (
                     <>
                       <div className="space-y-2">
@@ -810,7 +953,7 @@ export default function AgentPage() {
                         <button
                           key={pill}
                           onClick={() => sendShortcut(pill)}
-                          className="rounded-full border border-primary/10 bg-primary/5 px-3 py-1.5 text-[12px] text-primary transition hover:bg-primary/10"
+                          className="rounded-full border border-primary/10 bg-primary/5 px-2.5 py-1 text-[11px] leading-none text-primary transition hover:bg-primary/10"
                         >
                           {pill}
                         </button>
@@ -891,7 +1034,7 @@ export default function AgentPage() {
                         <div className="text-sm font-semibold">Estado actual</div>
                       </div>
                       <Badge variant="outline" className="rounded-full text-[10px]">
-                        Live
+                        {stalledAnalysis ? "Flow active" : "Live"}
                       </Badge>
                     </div>
 
@@ -971,13 +1114,35 @@ export default function AgentPage() {
 
                   <div className="rounded-[24px] border border-black/5 bg-white/80 p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)] dark:border-white/10 dark:bg-slate-900/60">
                     <div className="mb-3 flex items-center justify-between">
-                      <div className="text-sm font-semibold">Dónde intervenir primero</div>
+                      <div className="text-sm font-semibold">
+                        {stalledAnalysis ? "Flujo de destrabe activo" : "Dónde intervenir primero"}
+                      </div>
                       <Badge variant="warning" className="rounded-full text-[10px]">
                         Acción
                       </Badge>
                     </div>
 
-                    {incidentSnapshot.topIncident ? (
+                    {stalledAnalysis ? (
+                      <div className="space-y-3">
+                        <div className="rounded-2xl border border-amber-200/70 bg-amber-50/80 px-3 py-3 dark:border-amber-400/20 dark:bg-amber-500/10">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[12px] font-semibold text-foreground">
+                              {stalledAnalysis.diagnosis.ticketNumber}
+                            </div>
+                            <Badge variant="outline" className="rounded-full text-[10px]">
+                              Stalled flow
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-[12px] leading-[1.45] text-muted-foreground">
+                            {stalledAnalysis.diagnosis.shortDescription}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-primary/5 px-3 py-3 text-[12px] leading-[1.5] text-foreground/85">
+                          {stalledAnalysis.diagnosis.nextAction}
+                        </div>
+                      </div>
+                    ) : incidentSnapshot.topIncident ? (
                       <div className="space-y-3">
                         <div className="rounded-2xl border border-amber-200/70 bg-amber-50/80 px-3 py-3 dark:border-amber-400/20 dark:bg-amber-500/10">
                           <div className="flex items-center justify-between gap-3">
