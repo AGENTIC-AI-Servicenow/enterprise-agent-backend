@@ -53,7 +53,7 @@ ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
 # Healthcheck
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/', (r) => { if (r.statusCode < 200 || r.statusCode >= 500) throw new Error(r.statusCode); }).on('error', () => process.exit(1))"
 
 CMD ["node", "server.js"]

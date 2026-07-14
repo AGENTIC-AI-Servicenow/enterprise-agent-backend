@@ -1,37 +1,63 @@
+spring:
+  application:
+    name: enterprise-agent-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
 app:
-  timezone: America/Lima
+  timezone: ${APP_TIMEZONE:America/Lima}
 
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
+  forward-headers-strategy: framework
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+frontend:
+  url: ${FRONTEND_URL:http://localhost:3000}
+
+llm:
+  provider: ${LLM_PROVIDER:azure}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
 
 servicenow:
   instance:
-    url: https://everisspainsludemo3.service-now.com
-  base-url: https://everisspainsludemo3.service-now.com
+    url: ${SERVICENOW_INSTANCE_URL:https://everisspainsludemo3.service-now.com}
+  base-url: ${SERVICENOW_BASE_URL:${SERVICENOW_INSTANCE_URL:https://everisspainsludemo3.service-now.com}}
   auth:
-    mode: oauth # basic or oauth
-    username: ${SERVICENOW_USERNAME:your-username}
-    password: ${SERVICENOW_PASSWORD:your-password}
+    mode: ${SERVICENOW_AUTH_MODE:oauth} # basic or oauth
+    username: ${SERVICENOW_USERNAME:}
+    password: ${SERVICENOW_PASSWORD:}
   oauth:
     client-id: ${SERVICENOW_CLIENT_ID:}
     client-secret: ${SERVICENOW_CLIENT_SECRET:}
     authorization-url: ${SERVICENOW_AUTHORIZATION_URL:https://everisspainsludemo3.service-now.com/oauth_auth.do}
     token-url: ${SERVICENOW_TOKEN_URL:https://everisspainsludemo3.service-now.com/oauth_token.do}
     redirect-uri: ${SERVICENOW_REDIRECT_URI:http://localhost:8080/oauth/callback}
-    # OAuth scopes requested during authorize and token exchange.
-    # Must match what is configured in the ServiceNow Application Registry for this client.
     scope: ${SERVICENOW_SCOPE:useraccount}
 
-frontend:
-  url: ${FRONTEND_URL:http://localhost:3000}
-
 llm:
-  provider: azure
-
   ollama:
-    base-url: http://localhost:11434
-    model: qwen2.5:7b
-
+    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    model: ${OLLAMA_MODEL:qwen2.5:7b}
   azure:
     endpoint: ${AZURE_OPENAI_ENDPOINT:}
     deployment: ${AZURE_OPENAI_DEPLOYMENT:gpt-4o-mini}
@@ -41,6 +67,46 @@ llm:
 
 logging:
   level:
-    com.enterprise.agent: DEBUG
-    org.springframework.web.reactive.function.client: DEBUG
-    reactor.netty.http.client: DEBUG
+    com.enterprise.agent: ${APP_LOG_LEVEL:DEBUG}
+    org.springframework.web.reactive.function.client: ${WEBCLIENT_LOG_LEVEL:INFO}
+    reactor.netty.http.client: ${REACTOR_NETTY_LOG_LEVEL:INFO}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prd
+
+servicenow:
+  instance:
+    url: ${SERVICENOW_INSTANCE_URL}
+  base-url: ${SERVICENOW_BASE_URL:${SERVICENOW_INSTANCE_URL}}
+  auth:
+    mode: ${SERVICENOW_AUTH_MODE:oauth}
+    username: ${SERVICENOW_USERNAME:}
+    password: ${SERVICENOW_PASSWORD:}
+  oauth:
+    client-id: ${SERVICENOW_CLIENT_ID:}
+    client-secret: ${SERVICENOW_CLIENT_SECRET:}
+    authorization-url: ${SERVICENOW_AUTHORIZATION_URL}
+    token-url: ${SERVICENOW_TOKEN_URL}
+    redirect-uri: ${SERVICENOW_REDIRECT_URI}
+    scope: ${SERVICENOW_SCOPE:useraccount}
+
+llm:
+  ollama:
+    base-url: ${OLLAMA_BASE_URL:http://ollama:11434}
+    model: ${OLLAMA_MODEL:qwen2.5:7b}
+  azure:
+    endpoint: ${AZURE_OPENAI_ENDPOINT}
+    deployment: ${AZURE_OPENAI_DEPLOYMENT}
+    api-key: ${AZURE_OPENAI_KEY}
+    api-version: ${AZURE_OPENAI_API_VERSION:2024-02-15-preview}
+    use-responses-api: ${AZURE_OPENAI_USE_RESPONSES_API:true}
+
+logging:
+  level:
+    root: ${ROOT_LOG_LEVEL:INFO}
+    com.enterprise.agent: ${APP_LOG_LEVEL:INFO}
+    org.springframework.web.reactive.function.client: ${WEBCLIENT_LOG_LEVEL:WARN}
+    reactor.netty.http.client: ${REACTOR_NETTY_LOG_LEVEL:WARN}
