@@ -25,7 +25,7 @@ public class OAuthCallbackController {
 
     private final OAuthAuthorizationService authorizationService;
 
-    @Value("${frontend.url:http://localhost:3000}")
+    @Value("${frontend.url:https://enterprise-agent-frontend-three.vercel.app}")
     private String frontendUrl;
 
     public OAuthCallbackController(OAuthAuthorizationService authorizationService) {

@@ -27,7 +27,7 @@ management:
       enabled: true
 
 frontend:
-  url: ${FRONTEND_URL:http://localhost:3000}
+  url: ${FRONTEND_URL:https://enterprise-agent-frontend-three.vercel.app}
 
 llm:
   provider: ${LLM_PROVIDER:azure}

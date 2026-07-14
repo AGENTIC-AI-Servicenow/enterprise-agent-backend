@@ -10,7 +10,8 @@ import java.util.Arrays;
 
 /**
  * CORS configuration for Spring MVC.
- * Allows requests from frontend (localhost:3000) and ServiceNow instance.
+ * Allows requests from local frontend environments, the deployed Vercel frontend,
+ * and the ServiceNow instance.
  */
 @Configuration
 public class CorsConfig {
@@ -21,9 +22,10 @@ public class CorsConfig {
         
         // Allow requests from frontend and ServiceNow
         corsConfig.setAllowedOrigins(Arrays.asList(
-                "http://localhost:3000",              // Frontend development
-                "http://localhost:3001",              // Frontend alternative port
-                "https://everisspainsludemo3.service-now.com"  // ServiceNow instance
+                "http://localhost:3000",                               // Frontend development
+                "http://localhost:3001",                               // Frontend alternative port
+                "https://enterprise-agent-frontend-three.vercel.app",  // Frontend production
+                "https://everisspainsludemo3.service-now.com"          // ServiceNow instance
         ));
         
         // Allow all HTTP methods
